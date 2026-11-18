@@ -1,0 +1,23 @@
+{
+  "name": "surveyor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.12.0" },
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build && node scripts/offline.mjs",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@mapbox/shp-write": "0.4.3",
+    "exceljs": "4.4.0",
+    "leaflet": "1.9.4",
+    "papaparse": "5.5.3",
+    "pptxgenjs": "4.0.1"
+  },
+  "devDependencies": {
+    "vite": "^7.3.1"
+  }
+}

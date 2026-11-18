@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.xlsx
+*.pptx
+*.woff
+*.woff2
+*.kml
+*.shp
+*.shx
+*.dbf
+*.prj

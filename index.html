@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en-AU">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#1A2E61">
+    <meta name="description" content="Compare network survey KPIs and export PowerPoint reports without uploading your workbooks.">
+    <link rel="manifest" href="./manifest.webmanifest">
+    <link rel="icon" type="image/x-icon" sizes="16x16 32x32 48x48" href="./favicon.ico">
+    <title>Surveyor | Network survey reports</title>
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to survey workspace</a>
+    <header class="masthead">
+      <div class="shell masthead-inner">
+        <div class="wordmark">
+          <img src="./icon.svg" width="48" height="48" alt="">
+          Surveyor
+        </div>
+        <div class="header-actions">
+          <button type="button" id="install" class="quiet" hidden>Install app</button>
+          <button type="button" id="theme-switch" class="theme-switch" role="switch" aria-label="Dark mode" aria-checked="false">
+            <svg width="38" height="33.25" viewBox="0 -2 32 28" aria-hidden="true" focusable="false">
+              <svg class="theme-sky" width="32" height="23" viewBox="0 0 32 23">
+                <g class="theme-sun" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+                  <circle cx="16" cy="12" r="4.3"/>
+                  <path d="M16 3.5v2m0 13v2M7.5 12h2m13 0h2M10 6l1.4 1.4m9.2 9.2L22 18m0-12-1.4 1.4m-9.2 9.2L10 18"/>
+                </g>
+                <g class="theme-moon" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
+                  <path d="M18.5 4.4a7.8 7.8 0 1 0 4.8 12.3A7.3 7.3 0 0 1 18.5 4.4Z"/>
+                </g>
+              </svg>
+              <path class="theme-horizon" d="M4 23.5h24" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </header>
+    <main id="main" class="shell" tabindex="-1">
+      <section class="panel source" aria-labelledby="source-title">
+        <div class="source-intro">
+          <p class="eyebrow">SOURCE DATA</p>
+          <h1 id="source-title">Load survey workbooks</h1>
+          <p id="file-help">Select the .xlsx workbooks for one location. Imports are processed in this browser and never uploaded.</p>
+        </div>
+        <div class="workbooks">
+          <label for="files">Survey workbooks</label>
+          <input id="files" type="file" accept=".xlsx" multiple aria-describedby="file-help">
+          <label class="checkbox-label"><input id="keep-imports" type="checkbox" disabled> Keep imports in this browser across refreshes</label>
+          <p id="storage-status" role="status" hidden></p>
+        </div>
+        <div class="location">
+          <label for="location">Survey location</label>
+          <input id="location" type="text" maxlength="80" placeholder="e.g. Hunter Expressway">
+          <div class="actions">
+            <button type="button" class="primary" id="report" disabled>Download PowerPoint</button>
+            <button type="button" id="clear" disabled>Clear survey</button>
+          </div>
+        </div>
+        <div class="source-feedback">
+          <p id="status" role="status"><i>No workbooks imported.</i></p>
+          <ul id="issues" hidden></ul>
+          <details id="sources" hidden><summary>Imported workbooks</summary><ul id="source-list"></ul></details>
+          <details open>
+            <summary>Actix serving-cell snapshots</summary>
+            <div class="filters">
+              <div><label for="snapshot-date">Snapshot date override (optional)</label><input id="snapshot-date" type="date"></div>
+              <div><label for="snapshot-gap">Maximum gap in days</label><input id="snapshot-gap" type="number" min="0" step="1" value="7" required></div>
+              <div><label for="catalogs">Actix CSV snapshots</label><input id="catalogs" type="file" accept=".csv,text/csv" multiple></div>
+            </div>
+            <p id="catalog-status" role="status"><i>No cell snapshots imported.</i></p>
+            <ul id="catalog-list" hidden></ul>
+            <button type="button" id="clear-catalogs" disabled>Clear snapshots</button>
+          </details>
+        </div>
+      </section>
+      <section class="panel results" aria-labelledby="result-title">
+        <p class="eyebrow">KPI EXPLORER</p>
+        <h2 id="result-title">Compare measurements</h2>
+        <p id="empty">Import your workbooks to explore distributions, recorded samples and source statistics.</p>
+        <div id="explorer" hidden>
+          <div class="filters">
+            <div><label for="metric">KPI</label><select id="metric"></select></div>
+            <div><label for="mode">View</label><select id="mode"></select></div>
+            <div id="workbook-groups" hidden><label for="workbook-group">Workbook group</label><select id="workbook-group"></select></div>
+          </div>
+          <h3 id="chart-title"></h3>
+          <p id="interpretation"></p>
+          <div id="map-panel" hidden>
+            <div class="filters map-controls">
+              <div><label for="basemap">Basemap</label><select id="basemap">
+                <option value="street" selected>Street (OpenStreetMap)</option>
+                <option value="hybrid">Hybrid</option>
+                <option value="satellite">Satellite</option>
+                <option value="local">No basemap (local)</option>
+              </select></div>
+              <label class="checkbox-label"><input type="checkbox" id="show-sites" checked> Show Actix sites and sectors</label>
+            </div>
+            <p id="map-status" role="status"></p>
+            <p id="map-scale" hidden></p>
+            <div id="survey-map" role="region" aria-label="Interactive KPI map" tabindex="0"></div>
+            <div class="actions">
+              <button type="button" id="fit-map" disabled>Fit to samples</button>
+              <button type="button" id="download-kml" disabled>Download KML</button>
+              <button type="button" id="download-shp" disabled>Download Shapefile (ZIP)</button>
+            </div>
+            <section id="sector-key" aria-labelledby="sector-key-title" hidden>
+              <h4 id="sector-key-title">Actix sector legend</h4>
+              <div id="sector-legend"></div>
+            </section>
+          </div>
+          <div class="comparison">
+            <div id="visual" class="chart-scroll" role="region" aria-label="KPI chart" tabindex="0"></div>
+            <aside aria-labelledby="legend-title">
+              <h4 id="legend-title">Legend</h4>
+              <label id="map-legend-field" class="checkbox-label" hidden>
+                <input type="checkbox" id="map-legend" aria-controls="legend"> Use KPI thresholds
+              </label>
+              <ul id="legend"></ul>
+            </aside>
+          </div>
+          <div id="pagination" class="pagination" hidden>
+            <button type="button" id="previous">Previous page</button>
+            <span id="page" role="status"></span>
+            <button type="button" id="next">Next page</button>
+          </div>
+          <div class="actions exports">
+            <div id="image-format-field"><label for="image-format">Image format</label><select id="image-format">
+              <option value="svg">SVG</option><option value="png">PNG</option><option value="jpg">JPG</option>
+            </select></div>
+            <button type="button" id="export-chart">Download chart (SVG)</button>
+            <button type="button" id="copy-plot">Copy plot to clipboard</button>
+            <button type="button" id="export-legend">Download legend (SVG)</button>
+            <button type="button" id="export-both">Download both (SVG)</button>
+          </div>
+          <p id="export-status" role="status" hidden></p>
+          <details id="data-details">
+            <summary>View source values</summary>
+            <div id="table" class="table-scroll" role="region" aria-label="Source values" tabindex="0"></div>
+          </details>
+        </div>
+      </section>
+      <footer>Joseph, 2026</footer>
+    </main>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

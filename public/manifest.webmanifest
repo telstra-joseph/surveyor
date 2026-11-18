@@ -1,0 +1,14 @@
+{
+  "id": "./",
+  "name": "Surveyor — Network Survey Workspace",
+  "short_name": "Surveyor",
+  "lang": "en-AU",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#FAF8F4",
+  "theme_color": "#1A2E61",
+  "icons": [
+    { "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
