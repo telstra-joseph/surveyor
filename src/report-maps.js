@@ -1,0 +1,76 @@
+import { datasets, groupDatasets } from './charts.js';
+import { mapImage, svgImage } from './image-export.js';
+import { mapLegendExportEntry, mapLegendFilter, mapPointLegend } from './map-colors.js';
+import { supportsMapThresholds } from './map-thresholds.js';
+import { createMapView } from './map-view.js';
+import { mapSectors } from './sector-style.js';
+import { mapWorkbook } from './geo.js';
+import { reportMetricName } from './report-labels.js';
+
+const dataUrl = blob => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(reader.result);
+  reader.onerror = () => reject(reader.error);
+  reader.readAsDataURL(blob);
+});
+
+export async function captureReportMaps({ surveys, plans = [], bearing = 0, keys, snapshots, maxDays, basemap,
+  showSites, siteStyle, matchPci, thresholds, workbookSections, thresholdOverrides = {}, request, progress }) {
+  const jobsFor = (workbooks, workbookIndex) => keys.flatMap(key => groupDatasets(datasets(workbooks, key, 'map'))
+    .map(items => ({ key, items, workbooks, workbookIndex })));
+  const jobs = workbookSections ? surveys.flatMap((survey, index) => jobsFor([survey], index)) : jobsFor(surveys);
+  if (!jobs.length) return [];
+  const element = document.createElement('div');
+  element.className = 'report-map-capture';
+  element.setAttribute('aria-hidden', 'true');
+  element.inert = true;
+  document.body.append(element);
+  let view;
+  const maps = [];
+  try {
+    for (const [index, { key, items, workbooks, workbookIndex }] of jobs.entries()) {
+      const title = reportMetricName(key);
+      progress(index + 1, jobs.length, title);
+      const plan = plans.find(item => item.id === items[0].plan);
+      const planar = Boolean(plan?.planar);
+      if (!view || view.planar !== planar) {
+        view?.destroy();
+        view = createMapView(element, { options: [], selectedOptions: [] }, () => {}, true, { planar });
+        view.setSiteStyle(siteStyle);
+      }
+      view.setFloorPlan(plan || null);
+      view.setPlanStyle({ transparency: plan?.transparency || 0 });
+      view.setBearing(plan ? plan.bearing || 0 : bearing);
+      if (plan && !plan.orientationConfirmed && !plan.bearing) view.alignToFloorPlan();
+      const mapBasemap = plan ? 'local' : basemap;
+      view.setBasemap(mapBasemap);
+      const { map } = await request({
+        type: 'map', key, snapshots: plan ? [] : snapshots, maxDays,
+        legendMode: workbooks.length > 1 && supportsMapThresholds(key) ? (thresholds ? 'thresholds' : 'ue') : 'auto',
+        thresholdOverride: Object.hasOwn(thresholdOverrides, key) ? thresholdOverrides[key] : undefined,
+        workbooks: items.map(({ index, tag, color }) => mapWorkbook(workbooks[index], key, tag, color)),
+      });
+      if (!map.samples.features.length) continue;
+      const sectors = mapSectors(map, matchPci);
+      view.render({ ...map, sectors }, showSites && !plan, false);
+      const deadline = Date.now() + 4000;
+      while (view.tilesLoading() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 80));
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const capture = mapImage(element, title, mapBasemap !== 'local', { cropToFloorPlan: Boolean(plan) });
+      const legend = mapPointLegend(key, map, items);
+      if (legend.showCounts) {
+        legend.entries = mapLegendFilter(map, legend.entries).entries.map(entry => mapLegendExportEntry(entry, true));
+      }
+      maps.push({
+        key, workbookIndex, group: items[0].group, plan: plan?.name, width: capture.width, height: capture.height,
+        image: await dataUrl(await svgImage(capture.svg, 'png')),
+        legend,
+        attribution: capture.attribution, missingBasemap: mapBasemap !== 'local' && !capture.hasBasemap,
+      });
+    }
+    return maps;
+  } finally {
+    view?.destroy();
+    element.remove();
+  }
+}

@@ -89,7 +89,9 @@ export async function parseWorkbook(buffer, filename) {
         if (day) days.add(day);
         const lon = number(read('Longitude')), lat = number(read('Latitude'));
         const located = validCoordinates(lon, lat);
-        if (located) geography[position] = { coords: [lon, lat], day,
+        // Keep every row: indoor floor plans can position rows without GPS, or in plan units outside lon/lat ranges.
+        const planar = !located && lon !== null && lat !== null && (lon !== 0 || lat !== 0);
+        geography[position] = { coords: located ? [lon, lat] : null, ...(planar ? { xy: [lon, lat] } : {}), day,
           radio: Object.fromEntries(Object.entries(radioFields).map(([rat, keys]) => [rat, keys.map(key => number(read(key)))])) };
         if (profileColumn) {
           const device = label(row.getCell(profileColumn).value);
@@ -100,7 +102,7 @@ export async function parseWorkbook(buffer, filename) {
         for (const [col, key] of columns) {
           const raw = row.getCell(col).value;
           const value = number(raw);
-          const category = located ? label(raw) : '';
+          const category = label(raw);
           if (value !== null) metric(key).series.push([position, value]);
           if (category && (value === null || key === technologyModeKey)) (metric(key).geoCategories ??= []).push([position, category]);
           if (located && (value !== null || category)) {

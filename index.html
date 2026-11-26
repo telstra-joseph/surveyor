@@ -14,7 +14,11 @@
     <header class="masthead">
       <div class="shell masthead-inner">
         <div class="wordmark">
-          <img src="./icon.svg" width="48" height="48" alt="">
+          <svg class="wordmark-glyph" width="48" height="48" viewBox="0 0 512 512" aria-hidden="true" focusable="false">
+            <rect x="142" y="245" width="57" height="112" rx="8"/>
+            <rect x="227" y="194" width="57" height="163" rx="8"/>
+            <rect x="312" y="140" width="57" height="217" rx="8"/>
+          </svg>
           Surveyor
         </div>
         <div class="header-actions">
@@ -22,11 +26,11 @@
           <button type="button" id="theme-switch" class="theme-switch" role="switch" aria-label="Dark mode" aria-checked="false">
             <svg width="38" height="33.25" viewBox="0 -2 32 28" aria-hidden="true" focusable="false">
               <svg class="theme-sky" width="32" height="23" viewBox="0 0 32 23">
-                <g class="theme-sun" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+                <g class="theme-sun" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
                   <circle cx="16" cy="12" r="4.3"/>
                   <path d="M16 3.5v2m0 13v2M7.5 12h2m13 0h2M10 6l1.4 1.4m9.2 9.2L22 18m0-12-1.4 1.4m-9.2 9.2L10 18"/>
                 </g>
-                <g class="theme-moon" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
+                <g class="theme-moon" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round">
                   <path d="M18.5 4.4a7.8 7.8 0 1 0 4.8 12.3A7.3 7.3 0 0 1 18.5 4.4Z"/>
                 </g>
               </svg>
@@ -40,17 +44,17 @@
       <section class="panel source" aria-labelledby="source-title">
         <div class="source-intro">
           <p class="eyebrow">SOURCE DATA</p>
-          <h1 id="source-title">Load survey workbooks</h1>
-          <p id="file-help">Select the .xlsx workbooks for one location. Imports are processed in this browser and never uploaded.</p>
+          <h1 id="source-title">Upload logs</h1>
         </div>
         <div class="workbooks">
-          <label for="files">Survey workbooks</label>
-          <input id="files" type="file" accept=".xlsx" multiple aria-describedby="file-help">
+          <label for="files">Workbooks</label>
+          <input id="files" type="file" accept=".xlsx" multiple aria-describedby="workbooks-hint">
+          <p id="workbooks-hint" class="hint">Choose multiple workbooks at once or add more in another batch.</p>
           <label class="checkbox-label"><input id="keep-imports" type="checkbox" disabled> Keep imports in this browser across refreshes</label>
           <p id="storage-status" role="status" hidden></p>
         </div>
         <div class="location">
-          <label for="location">Survey location</label>
+          <label for="location">Location</label>
           <input id="location" type="text" maxlength="80" placeholder="e.g. Hunter Expressway">
           <div class="actions">
             <button type="button" class="primary" id="report" disabled>Download PowerPoint</button>
@@ -60,24 +64,32 @@
         <div class="source-feedback">
           <p id="status" role="status"><i>No workbooks imported.</i></p>
           <ul id="issues" hidden></ul>
-          <details id="sources" hidden><summary>Imported workbooks</summary><ul id="source-list"></ul></details>
-          <details open>
+          <details id="sources" open hidden><summary>Imported workbooks</summary><ul id="source-list"></ul></details>
+          <details class="actix-imports" open>
             <summary>Actix serving-cell snapshots</summary>
             <div class="filters">
-              <div><label for="snapshot-date">Snapshot date override (optional)</label><input id="snapshot-date" type="date"></div>
-              <div><label for="snapshot-gap">Maximum gap in days</label><input id="snapshot-gap" type="number" min="0" step="1" value="7" required></div>
+              <div id="snapshot-date-field" hidden><label for="snapshot-date">Snapshot date override (optional)</label><input id="snapshot-date" type="date"></div>
+              <div id="snapshot-gap-field" hidden><label for="snapshot-gap">Maximum gap in days</label><input id="snapshot-gap" type="number" min="0" step="1" value="7" required></div>
               <div><label for="catalogs">Actix CSV snapshots</label><input id="catalogs" type="file" accept=".csv,text/csv" multiple></div>
             </div>
             <p id="catalog-status" role="status"><i>No cell snapshots imported.</i></p>
             <ul id="catalog-list" hidden></ul>
             <button type="button" id="clear-catalogs" disabled>Clear snapshots</button>
           </details>
+          <details class="indoor-imports" open>
+            <summary>Indoor floor plans</summary>
+            <p id="plans-hint" class="hint">Select a MapInfo .tab file with its floor-plan image (.bmp, .png or .jpg) and, optionally, its .mrk marker file. With markers, workbook rows are spread evenly along the marker path; otherwise the workbook positions are used.</p>
+            <label for="plans">Floor plan files</label>
+            <input id="plans" type="file" accept=".tab,.bmp,.png,.jpg,.jpeg,.mrk" multiple aria-describedby="plans-hint">
+            <p id="plan-status" role="status"><i>No floor plans imported.</i></p>
+            <ul id="plan-list" hidden></ul>
+            <button type="button" id="clear-plans" disabled>Clear floor plans</button>
+          </details>
         </div>
       </section>
       <section class="panel results" aria-labelledby="result-title">
         <p class="eyebrow">KPI EXPLORER</p>
         <h2 id="result-title">Compare measurements</h2>
-        <p id="empty">Import your workbooks to explore distributions, recorded samples and source statistics.</p>
         <div id="explorer" hidden>
           <div class="filters">
             <div><label for="metric">KPI</label><select id="metric"></select></div>
@@ -94,8 +106,48 @@
                 <option value="satellite">Satellite</option>
                 <option value="local">No basemap (local)</option>
               </select></div>
-              <label class="checkbox-label"><input type="checkbox" id="show-sites" checked> Show Actix sites and sectors</label>
             </div>
+            <fieldset class="map-settings" id="site-controls" hidden>
+              <legend id="site-controls-title">Sites</legend>
+              <div class="filters site-toggles">
+                <label class="checkbox-label"><input type="checkbox" id="show-sites" checked> Show Actix sites and sectors</label>
+                <label class="checkbox-label"><input type="checkbox" id="show-hover-links" checked> Show cell links on hover</label>
+                <label class="checkbox-label" id="site-pci-colors-field" hidden><input type="checkbox" id="site-pci-colors"> Match cell colours to PCI legend</label>
+                <label class="checkbox-label" id="site-detected-only-field" hidden><input type="checkbox" id="site-detected-only"> Show only detected cells</label>
+              </div>
+              <div class="filters map-sliders">
+                <div><label for="site-size">Size</label> <span id="site-size-value" aria-hidden="true">100%</span>
+                  <input type="range" id="site-size" min="50" max="200" step="5" value="100" aria-valuetext="100%"></div>
+                <div><label for="site-transparency">Transparency</label> <span id="site-transparency-value" aria-hidden="true">0%</span>
+                  <input type="range" id="site-transparency" min="0" max="90" step="5" value="0" aria-valuetext="0%"></div>
+              </div>
+            </fieldset>
+            <fieldset class="map-settings" id="plan-controls" hidden>
+              <legend id="plan-controls-title">Floor plan</legend>
+              <div class="filters map-sliders">
+                <div><label for="plan-transparency">Floor plan transparency</label> <span id="plan-transparency-value" aria-hidden="true">0%</span>
+                  <input type="range" id="plan-transparency" min="0" max="90" step="5" value="0" aria-valuetext="0%"></div>
+              </div>
+              <div class="plan-orientation" id="plan-orientation" role="group" aria-labelledby="plan-orientation-heading" hidden>
+                <p><strong id="plan-orientation-heading">Floor plan orientation</strong> <span id="plan-orientation-prompt" aria-live="polite"></span></p>
+                <div class="plan-orientation-inputs">
+                  <div><label for="plan-bearing">Degrees</label>
+                    <input type="number" id="plan-bearing" min="0" max="359.9" step="0.1" inputmode="decimal" value="0"></div>
+                  <div><label for="plan-bearing-range">Rotation</label>
+                    <input type="range" id="plan-bearing-range" min="0" max="359.9" step="0.1" value="0" aria-valuetext="0°"></div>
+                </div>
+                <div class="plan-orientation-steps" role="group" aria-label="Fine rotation steps">
+                  <button type="button" data-turn="-90" aria-label="Rotate 90° anticlockwise">−90°</button>
+                  <button type="button" data-turn="-1" aria-label="Rotate 1° anticlockwise">−1°</button>
+                  <button type="button" data-turn="-0.1" aria-label="Rotate 0.1° anticlockwise">−0.1°</button>
+                  <button type="button" data-turn="0.1" aria-label="Rotate 0.1° clockwise">+0.1°</button>
+                  <button type="button" data-turn="1" aria-label="Rotate 1° clockwise">+1°</button>
+                  <button type="button" data-turn="90" aria-label="Rotate 90° clockwise">+90°</button>
+                  <button type="button" id="plan-align">Align to floor plan</button>
+                  <button type="button" id="plan-confirm" class="primary">Orientation is correct</button>
+                </div>
+              </div>
+            </fieldset>
             <p id="map-status" role="status"></p>
             <p id="map-scale" hidden></p>
             <div id="survey-map" role="region" aria-label="Interactive KPI map" tabindex="0"></div>
@@ -116,19 +168,25 @@
               <label id="map-legend-field" class="checkbox-label" hidden>
                 <input type="checkbox" id="map-legend" aria-controls="legend"> Use KPI thresholds
               </label>
+              <div id="legend-filter" hidden>
+                <p id="legend-filter-help">Select or double-click a legend entry to isolate its points.</p>
+                <p id="legend-endpoints" hidden>For continuous measurements, the legend entries match the exact endpoints only.</p>
+                <button type="button" id="legend-show-all" aria-controls="survey-map" aria-pressed="true">Show all points</button>
+                <span id="legend-filter-status" role="status"></span>
+              </div>
               <ul id="legend"></ul>
             </aside>
           </div>
-          <div id="pagination" class="pagination" hidden>
-            <button type="button" id="previous">Previous page</button>
+          <div id="pagination" class="pagination" role="group" aria-label="Chart pages" hidden>
+            <button type="button" id="previous" aria-controls="visual">Previous page</button>
             <span id="page" role="status"></span>
-            <button type="button" id="next">Next page</button>
+            <button type="button" id="next" aria-controls="visual">Next page</button>
           </div>
           <div class="actions exports">
             <div id="image-format-field"><label for="image-format">Image format</label><select id="image-format">
               <option value="svg">SVG</option><option value="png">PNG</option><option value="jpg">JPG</option>
             </select></div>
-            <button type="button" id="export-chart">Download chart (SVG)</button>
+            <button type="button" id="export-chart">Download plot (SVG)</button>
             <button type="button" id="copy-plot">Copy plot to clipboard</button>
             <button type="button" id="export-legend">Download legend (SVG)</button>
             <button type="button" id="export-both">Download both (SVG)</button>
@@ -136,12 +194,36 @@
           <p id="export-status" role="status" hidden></p>
           <details id="data-details">
             <summary>View source values</summary>
+            <div class="source-table-heading">
+              <h4 id="source-table-title"></h4>
+              <div id="source-pagination" class="pagination" role="group" aria-label="Source value pages" hidden>
+                <button type="button" id="source-previous" aria-controls="table">Previous page</button>
+                <span id="source-page" role="status"></span>
+                <button type="button" id="source-next" aria-controls="table">Next page</button>
+              </div>
+            </div>
             <div id="table" class="table-scroll" role="region" aria-label="Source values" tabindex="0"></div>
           </details>
         </div>
       </section>
       <footer>Joseph, 2026</footer>
     </main>
+    <dialog id="report-dialog" aria-labelledby="report-step-title">
+      <form id="report-options" novalidate>
+        <header>
+          <p id="report-step-number" class="eyebrow"></p>
+          <h2 id="report-step-title" tabindex="-1"></h2>
+        </header>
+        <div id="report-step-content"></div>
+        <p id="report-options-error" role="alert"></p>
+        <p id="report-order-status" class="visually-hidden" role="status"></p>
+        <footer class="actions">
+          <button id="report-cancel" type="button">Cancel</button>
+          <button id="report-back" type="button">Back</button>
+          <button id="report-next" class="primary" type="submit">Next</button>
+        </footer>
+      </form>
+    </dialog>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

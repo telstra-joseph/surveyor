@@ -20,6 +20,13 @@ export function workerRequest(worker, data) {
   });
 }
 
+export function orderWorkbookBatch(surveys) {
+  const readUE = name => /(?:^|[^a-z0-9])UE[\s_-]*(\d+)(?![a-z0-9])/i.exec(name)?.[1];
+  return surveys.map(survey => ({
+    survey, ue: Number(readUE(survey.profile) ?? readUE(survey.filename) ?? Infinity),
+  })).sort((a, b) => a.ue - b.ue).map(({ survey }) => survey);
+}
+
 export async function importFiles(files, onProgress) {
   const results = [];
   const concurrency = Math.min(files.length, Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 2) - 1)));

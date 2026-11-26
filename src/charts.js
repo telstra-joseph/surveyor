@@ -30,8 +30,10 @@ export function datasets(surveys, key, mode) {
     const metric = survey.metrics.find(metric => metric.key === key);
     const data = metric?.[mode];
     return (mode === 'map' ? metric?.geoCount : data?.length) ? [{
-      tag: `S${index + 1}`, name: deviceName(survey), color: colors[index % colors.length],
+      tag: `S${(survey.sourceIndex ?? index) + 1}`, name: deviceName(survey), color: colors[index % colors.length],
       group: Math.floor(index / colors.length), index, data,
+      // Each floor plan has its own coordinate frame, so map groups never mix plans.
+      ...(mode === 'map' && survey.planId ? { plan: survey.planId } : {}),
     }] : [];
   });
 }
@@ -39,8 +41,9 @@ export function datasets(surveys, key, mode) {
 export function groupDatasets(items) {
   const groups = new Map();
   for (const item of items) {
-    if (!groups.has(item.group)) groups.set(item.group, []);
-    groups.get(item.group).push(item);
+    const key = `${item.group}|${item.plan ?? ''}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(item);
   }
   return [...groups.values()];
 }
@@ -157,10 +160,10 @@ export function legend(title, items) {
 export function legendImage(title, items) {
   const columns = items.length > 4 ? 2 : 1;
   const marks = [];
-  items.forEach(({ color, label }, index) => {
+  items.forEach(({ color, label, shape }, index) => {
     const x = 14 + (index % columns) * (900 / columns);
     const y = 16 + Math.floor(index / columns) * 29;
-    marks.push({ kind: 'rect', x, y: y - 6, w: 12, h: 12, color });
+    marks.push({ kind: shape === 'circle' ? 'dot' : 'rect', x, y: y - 6, w: 12, h: 12, color });
     marks.push({ kind: 'text', value: shorten(label, columns === 1 ? 100 : 48), x: x + 23, y, size: 15, align: 'left', color: theme.ink });
   });
   return { title: `${title} — legend`, width: 900, height: Math.ceil(items.length / columns) * 29 + 4, marks };

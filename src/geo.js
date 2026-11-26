@@ -1,17 +1,24 @@
 import Papa from 'papaparse';
 import { technologyModeKey } from './charts.js';
-import { applyMapThresholds } from './map-thresholds.js';
+import { colorMapCategories, colorMapValues, isIdentifierKpi } from './map-colors.js';
+import { applyMapThresholds, supportsMapThresholds } from './map-thresholds.js';
 import { carrierCode, sectorKey } from './sector-style.js';
 
 const dayMs = 86_400_000;
-const technologyColors = new Map([
-  ['LTE', '#0D54FF'], ['LTE-5GNR', '#007266'], ['5GSA', '#A94318'],
-]);
-const otherModeColors = ['#933576', '#496421', '#6540A7', '#955000', '#35486D'];
 export const radioFields = {
   LTE: ['LTE_Uu_RRC_ECI', 'LTE_UE_PCI', 'LTE_UE_EARFCN_DL'],
   NR: ['NR_RRC_CellAccessRelatedInfo_cellIdentity_0', 'NR_UE_PCI_0', 'NR_UE_NR_ARFCN_DL_0'],
 };
+
+const radioKeys = new Set(Object.values(radioFields).flat());
+
+export function mapWorkbook(survey, key, tag, color) {
+  const { filename, geography, metrics, network } = survey;
+  return { tag, color, survey: { filename, geography, network,
+    metrics: metrics.filter(metric => metric.key === key || radioKeys.has(metric.key))
+      .map(({ key, series, geoCategories }) => ({ key, series, geoCategories })),
+  } };
+}
 
 export function validCoordinates(lon, lat) {
   return Number.isFinite(lon) && Number.isFinite(lat) && Math.abs(lon) <= 180 && Math.abs(lat) <= 90 && (lon !== 0 || lat !== 0);
@@ -46,9 +53,11 @@ function sectorAngles(row) {
   return azimuth >= 0 && azimuth <= 360 ? { azimuth: azimuth % 360, beamwidth } : null;
 }
 
+export const snapshotDateRequired = 'No valid snapshot date in filename. Enter a date override and select the file again.';
+
 export function parseActix(text, filename, override) {
   const day = isoDay(override || filename.match(/\d{4}-\d{2}-\d{2}(?=[ _T.]|$)/)?.[0]);
-  if (!day) throw new Error('No valid snapshot date in filename. Enter its date before importing.');
+  if (!day) throw new Error(snapshotDateRequired);
   const { data, errors, meta } = Papa.parse(text, { header: true, skipEmptyLines: 'greedy', transformHeader: field => field.trim().toUpperCase() });
   if (errors.length) throw new Error(`CSV could not be read: ${errors[0].message}`);
   const columns = new Set(meta.fields);
@@ -111,33 +120,79 @@ const distance = ([a, b], [c, d]) => {
   return 12742 * Math.asin(Math.sqrt(Math.min(1, h)));
 };
 
+function servingIdentities(survey, rat) {
+  const [identity, physical, frequency] = radioFields[rat].map(key => survey.metrics.find(metric => metric.key === key)?.series);
+  const carried = new Map();
+  if (!identity?.length || !physical?.length) return carried;
+  // Replay the raw radio readings, including handovers and changes on rows without GPS.
+  const readings = new Map();
+  for (const [column, series] of [identity, physical, frequency].entries()) {
+    for (const [row, value] of series || []) {
+      if (!Number.isSafeInteger(value) || value < 0 || (column === 0 && value === 0)) continue;
+      if (!readings.has(row)) readings.set(row, []);
+      readings.get(row)[column] = value;
+    }
+  }
+  let serving;
+  for (const row of [...readings.keys()].sort((a, b) => a - b)) {
+    const [id, pci, channel] = readings.get(row);
+    if (id !== undefined) {
+      serving = { id, pci, channel };
+    } else if (serving) {
+      if ((pci !== undefined && serving.pci !== undefined && pci !== serving.pci) ||
+          (channel !== undefined && serving.channel !== undefined && channel !== serving.channel)) {
+        serving = undefined;
+        continue;
+      }
+      serving.pci ??= pci;
+      serving.channel ??= channel;
+      if (pci !== undefined && survey.geography[row]) carried.set(row, serving.id);
+    }
+  }
+  return carried;
+}
+
 function matchCell({ ids, pairs }, [id, pci, channel], coords) {
   const usingId = Number.isSafeInteger(id) && id > 0;
   const candidates = usingId ? ids.get(id) : Number.isSafeInteger(pci) && Number.isSafeInteger(channel) && pairs.get(`${pci}/${channel}`);
   if (!candidates?.length) return { match: 'Unmatched' };
   let cell = candidates[0], km = Infinity;
+  let tied = false, missingCoordinates = false;
   for (const candidate of candidates) {
-    if (!candidate.coords) continue;
+    if (!candidate.coords) {
+      missingCoordinates = true;
+      continue;
+    }
     const gap = distance(coords, candidate.coords);
-    if (gap < km) { cell = candidate; km = gap; }
+    if (gap < km) { cell = candidate; km = gap; tied = false; }
+    else if (gap === km) tied = true;
   }
   return { match: usingId ? (candidates.length === 1 ? 'Exact ID' : 'Duplicate ID') : 'PCI/channel candidate',
     ...cell, count: candidates.length,
+    unambiguous: candidates.length === 1 || (!usingId && !tied && !missingCoordinates),
     km: Number.isFinite(km) ? Math.round(km * 1000) / 1000 : null };
 }
 
-export function mapFeatures({ workbooks, snapshots, key, maxDays, legendMode = 'auto' }) {
+export function mapFeatures({ workbooks, snapshots, key, maxDays, legendMode = 'auto', thresholdOverride }) {
   const indexes = new Map(), dates = new Map(), sites = new Map();
   const sectors = new Map(), sectorGroups = new Map();
   const features = [];
+  const pciRat = Object.keys(radioFields).find(rat => radioFields[rat][1] === key);
+  const pciNames = new Map();
   const isTechnologyMode = key === technologyModeKey;
   let min = Infinity, max = -Infinity;
   for (const { survey, tag, color } of workbooks) {
     const metric = survey.metrics.find(item => item.key === key);
     const categories = metric.geoCategories || [];
+    const identities = {};
+    if (survey.network !== 'other') {
+      for (const rat of Object.keys(radioFields)) {
+        if (snapshots.some(snapshot => snapshot.rat === rat)) identities[rat] = servingIdentities(survey, rat);
+      }
+    }
     for (const points of isTechnologyMode ? [categories] : [metric.series, categories]) for (const [row, value] of points) {
       const location = survey.geography[row];
-      if (!location) continue;
+      if (!location?.coords) continue;
       const { coords, day, radio } = location;
       if (typeof value === 'number') { min = Math.min(min, value); max = Math.max(max, value); }
       const props = { KIND: 'KPI sample', KPI: key, VALUE: typeof value === 'number' ? value : null,
@@ -161,7 +216,14 @@ export function mapFeatures({ workbooks, snapshots, key, maxDays, legendMode = '
         const { snapshot, days } = chosen;
         if (!indexes.has(snapshot)) indexes.set(snapshot, indexCells(snapshot.cells));
         const index = indexes.get(snapshot);
-        const match = matchCell(index, values, coords);
+        const carriedId = identities[rat]?.get(row);
+        const match = matchCell(index, carriedId === undefined ? values : [carriedId, values[1], values[2]], coords);
+        if (rat === pciRat && typeof value === 'number' && match.name && match.unambiguous &&
+            (match.pci === null || match.pci === value)) {
+          if (!pciNames.has(value)) pciNames.set(value, new Map());
+          const names = pciNames.get(value);
+          names.set(match.name, names.get(match.name) || match.match === 'Exact ID');
+        }
         Object.assign(props, {
           [`${prefix}_MATCH`]: match.match, [`${prefix}_DATE`]: snapshot.day, [`${prefix}_DAYS`]: days,
           [`${prefix}_CELL`]: match.id == null ? '' : String(match.id), [`${prefix}_SITE`]: match.site || '',
@@ -169,11 +231,13 @@ export function mapFeatures({ workbooks, snapshots, key, maxDays, legendMode = '
           [`${prefix}_SECT`]: match.sector || '', [`${prefix}_COUNT`]: match.count ?? null, [`${prefix}_KM`]: match.km ?? null,
         });
         if (match.coords) {
-          const siteKey = JSON.stringify([rat, snapshot.day, match.id, match.site, match.sector, match.coords, match.angles, match.carrier]);
+          const siteKey = JSON.stringify([rat, snapshot.day, match.id, match.site, match.sector, match.coords, match.angles,
+            match.carrier, rat === pciRat ? match.pci : undefined]);
           const previous = sites.get(siteKey);
           const siteId = previous?.id ?? sites.size;
           if (!previous || match.match === 'Exact ID') sites.set(siteKey, {
             type: 'Feature', id: siteId, geometry: { type: 'Point', coordinates: match.coords }, angles: match.angles, carrier: match.carrier,
+            pci: rat === pciRat ? match.pci : undefined,
             properties: { KIND: 'Actix cell', RAT: rat, SNAPSHOT: snapshot.day, CELL_ID: String(match.id ?? ''),
               SITE_ID: match.site, SECTOR: match.sector, MATCH: match.match },
           });
@@ -183,9 +247,9 @@ export function mapFeatures({ workbooks, snapshots, key, maxDays, legendMode = '
             const groups = sectorGroups.get(snapshot);
             if (!match.site || !groups.has(match.site)) {
               if (match.site) groups.add(match.site);
-              for (const { coords, angles, carrier } of index.bySite.get(match.site) || [match]) {
+              for (const { coords, angles, carrier, pci } of index.bySite.get(match.site) || [match]) {
                 if (!angles) continue;
-                const sector = { rat, coords, ...angles, carrier };
+                const sector = { rat, coords, ...angles, carrier, ...(rat === pciRat ? { pci } : {}) };
                 sectors.set(sectorKey(sector), sector);
               }
             }
@@ -195,19 +259,19 @@ export function mapFeatures({ workbooks, snapshots, key, maxDays, legendMode = '
       features.push(sample);
     }
   }
-  const technologyLegend = [];
-  if (isTechnologyMode) {
-    const modes = [...new Set(features.map(({ properties }) => properties.CATEGORY))].sort();
-    let fallback = 0;
-    for (const label of modes) {
-      const color = technologyColors.get(label.toUpperCase()) || otherModeColors[fallback++ % otherModeColors.length];
-      technologyLegend.push({ label, color });
-    }
-    const colors = new Map(technologyLegend.map(({ label, color }) => [label, color]));
-    for (const { properties } of features) properties.COLOR = colors.get(properties.CATEGORY);
+  const extent = Number.isFinite(min) ? [min, max] : null;
+  const categorical = isTechnologyMode || isIdentifierKpi(key) || !extent;
+  const categoryLegend = categorical ? colorMapCategories(features) : [];
+  for (const entry of categoryLegend) {
+    const names = pciNames.get(entry.value);
+    if (names) entry.cells = [...names].sort(([a], [b]) => a.localeCompare(b))
+      .map(([name, exact]) => ({ name, exact }));
   }
+  const thresholdLegend = categorical || (legendMode === 'ue' && !thresholdOverride) ? []
+    : applyMapThresholds(key, features, { multipleDevices: legendMode === 'thresholds' || Boolean(thresholdOverride), override: thresholdOverride });
+  const ueColors = !categorical && (legendMode === 'ue' || (supportsMapThresholds(key) && !thresholdLegend.length));
+  const valueLegend = !categorical && !ueColors && !thresholdLegend.length ? colorMapValues(features, extent) : [];
+  const snapshotDays = [...new Set([...indexes.keys()].map(({ day }) => day))].sort();
   return { samples: { type: 'FeatureCollection', features }, sites: { type: 'FeatureCollection', features: [...sites.values()] },
-    extent: Number.isFinite(min) ? [min, max] : null, technologyLegend,
-    thresholdLegend: legendMode === 'ue' ? [] : applyMapThresholds(key, features, { multipleDevices: legendMode === 'thresholds' }),
-    ueColors: legendMode === 'ue', sectors: [...sectors.values()] };
+    extent, categoryLegend, thresholdLegend, valueLegend, ueColors, sectors: [...sectors.values()], snapshotDays, pciRat };
 }

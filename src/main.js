@@ -1,11 +1,16 @@
 import './style.css';
-import { binsPerPage, chart, datasets, deviceName, escapeMarkup, format, groupDatasets, legend, legendImage, markLimit, metricName, modes, sourceTable, technologyModeKey, toSvg } from './charts.js';
-import { importFiles, workerRequest } from './workers.js';
+import { binsPerPage, chart, datasets, deviceName, escapeMarkup, format, groupDatasets, legend, legendImage, markLimit, metricName, modes, sourceTable, toSvg } from './charts.js';
+import { mapLegendEntryLabel, mapLegendExportEntry, mapLegendFilter, mapPointLegend } from './map-colors.js';
+import { importFiles, orderWorkbookBatch, workerRequest } from './workers.js';
 import { cellDescription, createMapView } from './map-view.js';
 import { supportsMapThresholds } from './map-thresholds.js';
-import { sectorLegendGroups } from './sector-style.js';
+import { detectedCellOverlay, linkedPciCells, mapSectors, sectorLegendGroups } from './sector-style.js';
 import { mapImage, stackImages, svgImage } from './image-export.js';
 import { loadImports, saveImports } from './saved-imports.js';
+import { captureReportMaps } from './report-maps.js';
+import { reportOptions } from './report-options.js';
+import { mapWorkbook, snapshotDateRequired } from './geo.js';
+import { positionSurvey } from './indoor.js';
 
 const $ = id => document.getElementById(id);
 const themeSwitch = $('theme-switch');
@@ -57,9 +62,47 @@ let reporting = false;
 let active;
 let installEvent;
 let snapshots = [];
+let plans = [];
 let mapView;
 let mapSequence = 0;
+// Chosen map orientation: floor plans keep their own bearing; outdoor maps share this one.
+let outdoorBearing = 0;
+let mapPlan;
+let planSaveTimer;
+// The basemap picked by the user; non-georeferenced plans show "no basemap" without forgetting it.
+let chosenBasemap = $('basemap').value;
+function savePlansSoon() {
+  clearTimeout(planSaveTimer);
+  planSaveTimer = setTimeout(persistIfKept, 600);
+}
+function storeBearing(bearing) {
+  if (!mapPlan) {
+    outdoorBearing = bearing;
+    return;
+  }
+  if ((mapPlan.bearing || 0) === bearing) return;
+  mapPlan.bearing = bearing;
+  savePlansSoon();
+}
 const gisRequest = data => workerRequest(new Worker(new URL('./gis.worker.js', import.meta.url), { type: 'module' }), data);
+const planRequest = data => workerRequest(new Worker(new URL('./plan.worker.js', import.meta.url), { type: 'module' }), data);
+const planFor = survey => survey && plans.find(plan => plan.id === survey.planId);
+const positioned = new WeakMap();
+// Surveys as they are plotted: rows assigned to a floor plan are repositioned onto it.
+function viewSurvey(survey) {
+  const plan = planFor(survey);
+  if (!plan) return survey;
+  const cached = positioned.get(survey);
+  if (cached?.plan === plan) return cached.survey;
+  const result = positionSurvey(survey, plan);
+  positioned.set(survey, { plan, survey: result });
+  return result;
+}
+const viewSurveys = () => surveys.map(viewSurvey);
+
+function persistIfKept() {
+  if ($('keep-imports').checked) void persistImports();
+}
 
 function storageStatus(message) {
   $('storage-status').hidden = !message;
@@ -69,7 +112,7 @@ function storageStatus(message) {
 async function persistImports() {
   try {
     const keep = $('keep-imports').checked;
-    await saveImports(keep ? { surveys, snapshots } : null);
+    await saveImports(keep ? { surveys, snapshots, plans, workbookOrderSaved: true } : null);
     storageStatus(keep ? 'Imports saved locally in this browser.' : 'Saved imports removed from this browser.');
   } catch (error) {
     storageStatus(`Could not update saved imports: ${error.message}`);
@@ -86,10 +129,77 @@ const list = (element, items) => {
   element.replaceChildren(fragment);
 };
 
-function renderLegend(title, entries) {
-  active.legend = { title, entries };
+function renderLegend(title, entries, filter, showCounts = false) {
+  const cellLabels = entry => (entry.cells || []).map(({ name, exact }) => exact ? name : `${name} (candidate)`);
+  active.legend = { title, entries: filter ? entries.map(entry => mapLegendExportEntry(entry, showCounts)) : entries };
   $('legend-title').textContent = title;
-  renderSwatches($('legend'), entries);
+  $('legend-filter').hidden = !filter || !entries.length;
+  $('legend-endpoints').hidden = !filter || (active.map?.extent?.[0] === active.map?.extent?.[1]) || !active.map?.valueLegend.length;
+  $('legend-show-all').setAttribute('aria-pressed', 'true');
+  $('legend-filter-status').textContent = '';
+  const legendList = $('legend');
+  legendList.classList.toggle('legend-grid', Boolean(filter));
+  legendList.classList.toggle('sinr-legend', Boolean(filter && showCounts));
+  const longest = entries.reduce((max, entry) => (entry.cells || []).reduce(
+    (width, { name }) => Math.max(width, name.length), Math.max(max, mapLegendEntryLabel(entry, showCounts).length)), 0);
+  legendList.style.setProperty('--legend-box-width', `${Math.min(40, Math.max(16, longest + 11))}ch`);
+  renderSwatches(legendList, entries);
+  if (!filter) return;
+  [...legendList.children].forEach((item, index) => {
+    const entry = entries[index];
+    const button = document.createElement('button');
+    const label = document.createElement('span');
+    const percentage = document.createElement('span');
+    button.type = 'button';
+    button.disabled = !entry.count;
+    button.setAttribute('aria-controls', 'survey-map');
+    button.setAttribute('aria-pressed', 'false');
+    percentage.className = 'legend-share';
+    percentage.textContent = entry.share;
+    label.className = 'legend-label';
+    label.textContent = mapLegendEntryLabel(entry, showCounts);
+    const names = cellLabels(entry);
+    if (names.length) {
+      const cells = document.createElement('span');
+      cells.className = 'legend-cells';
+      cells.textContent = ` — ${names.join(', ')}`;
+      label.append(cells);
+    }
+    button.append(item.firstElementChild, label, percentage);
+    button.addEventListener('click', () => applyLegendFilter(entry, button));
+    item.replaceChildren(button);
+  });
+  if (active.map?.pciRat && entries.some(entry => entry.cells?.length)) {
+    legendList.classList.add('measure-pci-legend');
+    const width = [...legendList.querySelectorAll('button')].reduce(
+      (max, button) => Math.max(max, button.getBoundingClientRect().width), 0);
+    legendList.classList.remove('measure-pci-legend');
+    legendList.style.setProperty('--legend-box-width', `max(16ch, ${Math.ceil(width)}px)`);
+  }
+}
+
+function applyLegendFilter(entry, button) {
+  if (!active?.legendFilter || active.isolated === entry) return;
+  active.isolated = entry;
+  active.visibleSamples = active.legendFilter.samples(entry);
+  $('legend').querySelector('[aria-pressed="true"]')?.setAttribute('aria-pressed', 'false');
+  button?.setAttribute('aria-pressed', 'true');
+  $('legend-show-all').setAttribute('aria-pressed', String(!entry));
+  const count = active.visibleSamples.features.length;
+  const plotted = mapView.setSamples(active.visibleSamples);
+  if (detectedOnly()) refreshSiteOverlay();
+  if (active.map.pciRat) {
+    const cells = entry && $('show-sites').checked ? linkedPciCells(active.map, active.visibleSamples) : [];
+    mapView.fit(cells);
+  }
+  $('legend-filter-status').textContent = entry
+    ? `Showing ${format(count)} of ${format(active.map.samples.features.length)} mapped samples: ${entry.label}.`
+      + (plotted < count ? ` Map preview draws ${format(plotted)} points.` : '')
+    : 'Showing all mapped samples.';
+  page = 0;
+  active.pages = Math.max(1, Math.ceil(count / 100));
+  renderPagination();
+  renderTable();
 }
 
 function renderSwatches(element, entries) {
@@ -103,9 +213,24 @@ function renderSwatches(element, entries) {
   });
 }
 
+const detectedOnly = () => Boolean(active?.map?.pciRat && $('site-detected-only').checked);
+
+function siteOverlay() {
+  const { map, visibleSamples } = active;
+  const overlay = { sites: map.sites, sectors: mapSectors(map, $('site-pci-colors').checked) };
+  return detectedOnly() ? detectedCellOverlay({ ...overlay, pciRat: map.pciRat }, visibleSamples) : overlay;
+}
+
+function refreshSiteOverlay() {
+  if (!active?.map) return;
+  active.siteOverlay = siteOverlay();
+  mapView.setSiteOverlay(active.siteOverlay);
+  renderSectorLegend();
+}
+
 function sectorLegend() {
-  if (!$('show-sites').checked || active?.mode !== 'map') return [];
-  return sectorLegendGroups(active.map?.sectors || []);
+  if (!$('show-sites').checked || active?.mode !== 'map' || !active.map) return [];
+  return sectorLegendGroups(active.siteOverlay.sectors);
 }
 
 function renderSectorLegend() {
@@ -124,6 +249,13 @@ function controls() {
   $('files').disabled = restoring || importing || reporting;
   $('report').disabled = importing || reporting || !surveys.length;
   $('clear').disabled = importing || reporting || !surveys.length;
+  const sourceRows = $('source-list').children;
+  for (const [index, row] of [...sourceRows].entries()) {
+    for (const control of row.querySelectorAll('button, select')) {
+      control.disabled = importing || reporting || (control.dataset.move === 'up' && index === 0)
+        || (control.dataset.move === 'down' && index === sourceRows.length - 1);
+    }
+  }
 }
 
 function filename(value) {
@@ -142,33 +274,40 @@ function download(blob, name) {
 }
 
 const cell = value => escapeMarkup(typeof value === 'number' ? format(value) : value ?? 'Not reported');
-const table = (caption, headers, rows) =>
-  `<table><caption>${escapeMarkup(caption)}</caption><thead><tr>${headers.map(header => `<th scope="col">${cell(header)}</th>`).join('')}</tr></thead>
+const table = (headers, rows) =>
+  `<table aria-labelledby="source-table-title"><thead><tr>${headers.map(header => `<th scope="col">${cell(header)}</th>`).join('')}</tr></thead>
    <tbody>${rows.map(([label, ...values]) => `<tr><th scope="row">${cell(label)}</th>${values.map(value => `<td>${cell(value)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+
+const mapGlyph = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3zM9 3v15M15 6v15"/></svg>';
 
 function renderTable() {
   if (!active || !$('data-details').open) return;
   const { mode, title, items, rows } = active;
-  const mapRows = mode === 'map' ? active.map?.samples.features.slice(page * 100, (page + 1) * 100) || [] : [];
+  const mapRows = mode === 'map' ? active.visibleSamples?.features.slice(page * 100, (page + 1) * 100) || [] : [];
+  $('source-table-title').textContent = mode === 'map' ? `${title}: geolocated samples on this page`
+    : mode === 'series' ? `${title}: source samples on this page` : title;
   $('table').innerHTML = mode === 'map'
-    ? table(`${title}: geolocated samples on this page`, ['Device', 'Log row', 'Longitude', 'Latitude', 'Value', 'Network', 'LTE association', 'NR association', 'Site link'],
+    ? table(['Device', 'Log row', 'Longitude', 'Latitude', 'Value', 'Network', 'LTE association', 'NR association', 'Site link'],
       mapRows.map(({ geometry, properties: props }) => [
         props.DEVICE, props.LOG_ROW, ...geometry.coordinates.map(String), props.CATEGORY || props.VALUE, props.NETWORK,
         cellDescription(props, 'L') || null, cellDescription(props, 'N') || null, '—',
       ]))
     : mode === 'series'
-    ? table(`${title}: source samples on this page`, ['Device', 'Workbook row position', 'Value'], rows)
-    : table(title, [mode === 'histogram' ? 'Range or category' : 'Statistic', ...items.map(item => `${item.tag} ${item.name}`)],
+    ? table(['Device', 'Workbook row position', 'Value'], rows)
+    : table([mode === 'histogram' ? 'Range or category' : 'Statistic', ...items.map(item => `${item.tag} ${item.name}`)],
       rows.map(({ label, values }) => [label, ...values]));
   if (mode === 'map') $('table').querySelectorAll('tbody tr').forEach((row, index) => {
     const sample = mapRows[index];
     if (!sample.siteLinks) return;
     const button = document.createElement('button');
     button.type = 'button';
-    button.textContent = 'Show on map';
+    button.className = 'source-map-button';
+    button.innerHTML = mapGlyph;
+    button.title = 'Show on map';
     button.setAttribute('aria-label', `Show ${sample.properties.DEVICE} row ${sample.properties.LOG_ROW} on map`);
     button.addEventListener('click', () => {
       $('show-sites').checked = true;
+      updateSiteControls();
       mapView.setCells(true);
       renderSectorLegend();
       mapView.selectSample(sample);
@@ -182,7 +321,7 @@ function renderChart(preserveSelection = false) {
   const key = $('metric').value;
   const mode = $('mode').value;
   const title = metricName(key);
-  const allItems = datasets(surveys, key, mode);
+  const allItems = datasets(viewSurveys(), key, mode);
   if (!allItems.length) return;
   const groups = groupDatasets(allItems);
   const group = $('workbook-group').selectedIndex;
@@ -226,7 +365,7 @@ function renderChart(preserveSelection = false) {
   for (const id of ['export-chart', 'copy-plot', 'export-both']) $(id).hidden = !plot && !isMap;
   if (!isMap) setMapImageActions(false);
   updateImageLabels();
-  if (isMap && key === technologyModeKey) renderLegend('Technology mode legend', []);
+  if (isMap) renderLegend('Legend', []);
   else renderLegend('Legend', items.map(({ tag, name, color }) => ({ label: `${tag} ${name}`, color })));
   renderPagination();
   $('map-panel').hidden = !isMap;
@@ -238,14 +377,20 @@ function renderChart(preserveSelection = false) {
 
 function renderPagination() {
   const { mode, pages } = active;
-  $('pagination').hidden = pages <= 1;
-  $('previous').setAttribute('aria-disabled', String(page === 0));
-  $('next').setAttribute('aria-disabled', String(page >= pages - 1));
-  $('page').textContent = `${mode === 'series' || mode === 'map' ? 'Source values' : 'Page'} ${page + 1} of ${pages}`;
+  $('pagination').hidden = pages <= 1 || mode !== 'histogram';
+  $('source-pagination').hidden = pages <= 1;
+  for (const prefix of ['', 'source-']) {
+    $(`${prefix}previous`).setAttribute('aria-disabled', String(page === 0));
+    $(`${prefix}next`).setAttribute('aria-disabled', String(page >= pages - 1));
+  }
+  $('page').textContent = `Page ${page + 1} of ${pages}`;
+  $('source-page').setAttribute('aria-live', mode === 'histogram' ? 'off' : 'polite');
+  $('source-page').textContent = `Source values ${page + 1} of ${pages}`;
 }
 
 function resetMap() {
   mapSequence++;
+  $('site-controls').hidden = true;
   mapView?.setBasemap('local');
   mapView?.clear();
 }
@@ -263,6 +408,11 @@ async function renderMap(preserveSelection = false) {
   const request = ++mapSequence;
   page = 0;
   delete active.map;
+  delete active.visibleSamples;
+  delete active.legendFilter;
+  delete active.isolated;
+  updateSiteControls();
+  renderLegend('Legend', []);
   renderSectorLegend();
   active.pages = 1;
   renderPagination();
@@ -272,7 +422,25 @@ async function renderMap(preserveSelection = false) {
   const canChooseLegend = surveys.length > 1 && supportsMapThresholds(active.key);
   $('map-legend-field').hidden = !canChooseLegend;
   const legendMode = canChooseLegend ? ($('map-legend').checked ? 'thresholds' : 'ue') : 'auto';
-  mapView ||= createMapView($('survey-map'), $('basemap'), message => { $('map-status').textContent = message; });
+  const plan = planFor(surveys[active.items[0].index]);
+  const planar = Boolean(plan?.planar);
+  if (mapView && mapView.planar !== planar) {
+    mapView.destroy();
+    mapView = undefined;
+  }
+  if (!mapView) {
+    mapView = createMapView($('survey-map'), $('basemap'), message => { $('map-status').textContent = message; }, false,
+      { planar, onRotate: storeBearing, onRotating: showPlanBearing });
+    mapView.setSiteStyle(siteStyle());
+    mapView.setHoverLinks($('show-hover-links').checked);
+    if ($('basemap').querySelector(`option[value="${chosenBasemap}"]`)?.disabled) chosenBasemap = 'local';
+  }
+  mapPlan = plan;
+  $('basemap').value = planar ? 'local' : chosenBasemap;
+  mapView.setFloorPlan(plan || null);
+  mapView.setPlanStyle({ transparency: plan?.transparency || 0 });
+  mapView.setBearing(plan ? plan.bearing || 0 : outdoorBearing);
+  updatePlanControls();
   if (!preserveSelection || !mapView.selectedDevice()) {
     mapView.setBasemap('local');
     mapView.clear();
@@ -284,23 +452,24 @@ async function renderMap(preserveSelection = false) {
     return;
   }
   try {
-    const { map } = await gisRequest({ type: 'map', key: active.key, snapshots, maxDays: gap.valueAsNumber, legendMode,
-      workbooks: active.items.map(({ index, tag, color }) => {
-        const { filename, geography, metrics, network } = surveys[index];
-        const metric = metrics.find(item => item.key === active.key);
-        const { key, series, geoCategories } = metric;
-        return { survey: { filename, geography, network, metrics: [{ key, series, geoCategories }] }, tag, color };
-      }) });
+    const views = viewSurveys();
+    const { map } = await gisRequest({ type: 'map', key: active.key, snapshots: planar ? [] : snapshots, maxDays: gap.valueAsNumber, legendMode,
+      workbooks: active.items.map(({ index, tag, color }) => mapWorkbook(views[index], active.key, tag, color)) });
     if (request !== mapSequence) return;
     active.map = map;
+    updateSiteControls();
+    active.visibleSamples = map.samples;
+    active.siteOverlay = siteOverlay();
     renderSectorLegend();
-    if (active.key === technologyModeKey) renderLegend('Technology mode legend', map.technologyLegend);
-    else if (map.thresholdLegend.length) renderLegend('KPI thresholds', map.thresholdLegend);
-    else renderLegend(map.ueColors ? 'UE legend' : 'Legend', active.items.map(({ tag, name, color }) => ({ label: `${tag} ${name}`, color })));
+    const { title, entries, showCounts } = mapPointLegend(active.key, map, active.items);
+    active.legendFilter = mapLegendFilter(map, entries);
+    renderLegend(title, active.legendFilter.entries, active.legendFilter, showCounts);
     active.pages = Math.max(1, Math.ceil(map.samples.features.length / 100));
-    const { plotted, sitesPlotted } = mapView.render(map, $('show-sites').checked, preserveSelection);
+    const { plotted, sitesPlotted } = mapView.render({ ...map, ...active.siteOverlay },
+      $('show-sites').checked, preserveSelection);
     const count = map.samples.features.length, siteCount = map.sites.features.length;
-    mapView.setBasemap(count ? $('basemap').value : 'local');
+    mapView.setBasemap(count ? chosenBasemap : 'local');
+    updatePlanControls();
     if (map.thresholdLegend.length) {
       $('map-scale').hidden = false;
       $('map-scale').textContent = 'Point colours indicate KPI threshold bands.';
@@ -311,9 +480,11 @@ async function renderMap(preserveSelection = false) {
       $('map-scale').hidden = true;
       $('map-scale').textContent = '';
     }
-    $('map-status').textContent = `${format(count)} geolocated ${count === 1 ? 'sample' : 'samples'} · ${format(siteCount)} associated Actix ${siteCount === 1 ? 'cell' : 'cells'}.`
-      + (plotted < count || sitesPlotted < siteCount ? ` Map preview shows ${format(plotted)} samples and ${format(sitesPlotted)} cells; downloads include all points.` : '');
+    $('map-status').textContent = `${format(count)} ${plan ? `samples on floor plan ${plan.name}` : `geolocated ${count === 1 ? 'sample' : 'samples'}`}`
+      + (planar ? ' (not georeferenced: blank basemap, no Actix matching or KML/SHP export).' : ` · ${format(siteCount)} associated Actix ${siteCount === 1 ? 'cell' : 'cells'}.`)
+      + (plotted < count || sitesPlotted < active.siteOverlay.sites.features.length ? ` Map preview shows ${format(plotted)} samples and ${format(sitesPlotted)} cells; GIS downloads include all points.` : '');
     setMapActions(!count);
+    if (planar) for (const id of ['download-kml', 'download-shp', 'basemap']) $(id).disabled = true;
     renderPagination();
     renderTable();
   } catch (error) {
@@ -322,13 +493,14 @@ async function renderMap(preserveSelection = false) {
 }
 
 function renderGroups(preserveSelection = false) {
-  const groups = groupDatasets(datasets(surveys, $('metric').value, $('mode').value));
+  const groups = groupDatasets(datasets(viewSurveys(), $('metric').value, $('mode').value));
   const select = $('workbook-group');
   select.replaceChildren();
   for (const items of groups) {
     const first = items[0].tag;
     const last = items.at(-1).tag;
-    select.add(new Option(first === last ? first : `${first}–${last}`));
+    const plan = items[0].plan && plans.find(item => item.id === items[0].plan);
+    select.add(new Option(`${first === last ? first : `${first}–${last}`}${plan ? ` · ${plan.name}` : ''}`));
   }
   $('workbook-groups').hidden = groups.length <= 1;
   if (preserveSelection) {
@@ -341,30 +513,101 @@ function renderGroups(preserveSelection = false) {
 }
 
 function renderModes(preferred, preserveSelection = false) {
-  const available = Object.keys(modes).filter(mode => datasets(surveys, $('metric').value, mode).length);
+  const available = Object.keys(modes).filter(mode => datasets(viewSurveys(), $('metric').value, mode).length);
   $('mode').replaceChildren(...available.map(mode => new Option(modes[mode], mode)));
   if (available.includes(preferred)) $('mode').value = preferred;
   renderGroups(preserveSelection && $('mode').value === 'map');
 }
 
-function renderSurvey() {
+function removeWorkbook(index) {
+  const [removed] = surveys.splice(index, 1);
+  renderSurvey(false);
+  $('status').textContent = `Removed ${removed.filename}. ${surveys.length
+    ? `${surveys.length} ${surveys.length === 1 ? 'workbook' : 'workbooks'} remaining.`
+    : 'No workbooks imported.'}`;
+  const buttons = $('source-list').querySelectorAll('button[data-remove]');
+  (buttons[Math.min(index, buttons.length - 1)] || $('files')).focus();
+  if ($('keep-imports').checked) void persistImports();
+}
+
+function moveWorkbook(index, direction) {
+  const destination = index + (direction === 'up' ? -1 : 1);
+  const moved = surveys[index];
+  [surveys[index], surveys[destination]] = [surveys[destination], moved];
+  renderSurvey(false);
+  const row = $('source-list').children[destination];
+  (row.querySelector(`button[data-move="${direction}"]:enabled`) || row.querySelector('button[data-move]:enabled')).focus();
+  $('status').textContent = `${moved.filename} moved to S${destination + 1}.`;
+  persistIfKept();
+}
+
+function renderSurvey(preferMap = true) {
   const previous = $('metric').value;
   keys = [...new Set(surveys.flatMap(survey => survey.metrics.map(metric => metric.key)))];
-  $('empty').hidden = keys.length > 0;
   $('explorer').hidden = !keys.length;
   $('sources').hidden = !surveys.length;
-  list($('source-list'), surveys.map((survey, index) =>
-    `S${index + 1} ${deviceName(survey)} · ${survey.filename} · ${format(survey.rows)} series rows`));
+  $('source-list').replaceChildren(...surveys.map((survey, index) => {
+    const item = document.createElement('li');
+    const label = document.createElement('span');
+    const button = document.createElement('button');
+    label.textContent = `S${index + 1} ${deviceName(survey)} · ${survey.filename} · ${format(survey.rows)} series rows`;
+    button.type = 'button';
+    button.dataset.remove = '';
+    button.textContent = '×';
+    button.setAttribute('aria-label', `Remove workbook S${index + 1}: ${survey.filename}`);
+    button.addEventListener('click', () => removeWorkbook(index));
+    item.append(label);
+    if (plans.length) {
+      const field = document.createElement('label');
+      const select = document.createElement('select');
+      field.className = 'plan-select';
+      field.append(Object.assign(document.createElement('span'), { className: 'visually-hidden', textContent: `Floor plan for S${index + 1}` }), select);
+      select.add(new Option('No floor plan', ''));
+      for (const plan of plans) select.add(new Option(`Floor plan: ${plan.name}`, plan.id));
+      select.value = planFor(survey) ? survey.planId : '';
+      select.addEventListener('change', () => {
+        if (select.value) survey.planId = select.value;
+        else delete survey.planId;
+        const plan = planFor(survey);
+        $('plan-status').textContent = `S${index + 1} ${plan ? `placed on floor plan ${plan.name}` : 'uses its workbook positions'}.`;
+        renderSurvey();
+        persistIfKept();
+      });
+      item.append(field);
+    }
+    const actions = document.createElement('div');
+    actions.className = 'workbook-actions';
+    if (surveys.length > 1) {
+      for (const [direction, symbol] of [['up', '\u2191'], ['down', '\u2193']]) {
+        const move = document.createElement('button');
+        move.type = 'button';
+        move.dataset.move = direction;
+        move.textContent = symbol;
+        move.setAttribute('aria-label', `Move workbook S${index + 1} ${direction}: ${survey.filename}`);
+        move.addEventListener('click', () => moveWorkbook(index, direction));
+        actions.append(move);
+      }
+    }
+    actions.append(button);
+    item.append(actions);
+    return item;
+  }));
   $('metric').replaceChildren(...keys.map(key => new Option(metricName(key), key)));
   if (keys.includes(previous)) $('metric').value = previous;
   else if (keys.includes('LTE_UE_RSRP')) $('metric').value = 'LTE_UE_RSRP';
-  if (keys.length) renderModes($('mode').value);
-  else {
+  if (keys.length && preferMap) {
+    const mappable = new Set(viewSurveys().flatMap(({ metrics }) => metrics.filter(metric => metric.geoCount > 0).map(metric => metric.key)));
+    if (mappable.size && !mappable.has($('metric').value)) $('metric').value = mappable.values().next().value;
+    renderModes(mappable.size ? 'map' : $('mode').value);
+  } else if (keys.length) {
+    renderModes($('mode').value);
+  } else {
     resetMap();
     active = undefined;
     $('table').replaceChildren();
     $('visual').replaceChildren();
     $('legend').replaceChildren();
+    $('legend-filter').hidden = true;
   }
   controls();
 }
@@ -388,12 +631,14 @@ $('files').addEventListener('change', async event => {
     list($('issues'), issues);
     $('issues').hidden = !issues.length;
     if (imported.length) {
-      surveys = imported;
+      const placed = assignPlans(imported, plans);
+      surveys = [...surveys, ...orderWorkbookBatch(imported)];
       renderSurvey();
+      if (placed) $('plan-status').textContent = `${placed} ${placed === 1 ? 'workbook' : 'workbooks'} placed on imported floor plans.`;
       if ($('keep-imports').checked) await persistImports();
     }
     $('status').textContent = imported.length
-      ? `Imported ${imported.length} of ${files.length} workbooks. ${keys.length} KPIs available.`
+      ? `Imported ${imported.length} of ${files.length} selected workbooks. ${surveys.length} ${surveys.length === 1 ? 'workbook' : 'workbooks'} in this survey. ${keys.length} KPIs available.`
       : 'No workbooks could be imported. The current survey has not changed.';
   } catch (error) {
     $('status').textContent = `Import failed: ${error.message}`;
@@ -423,8 +668,10 @@ function turnPage(offset) {
   if (active.mode === 'map') { renderPagination(); renderTable(); }
   else renderChart();
 }
-$('previous').addEventListener('click', () => turnPage(-1));
-$('next').addEventListener('click', () => turnPage(1));
+for (const prefix of ['', 'source-']) {
+  $(`${prefix}previous`).addEventListener('click', () => turnPage(-1));
+  $(`${prefix}next`).addEventListener('click', () => turnPage(1));
+}
 $('data-details').addEventListener('toggle', renderTable);
 function exportStatus(text) {
   $('export-status').hidden = false;
@@ -432,7 +679,7 @@ function exportStatus(text) {
 }
 function updateImageLabels() {
   const name = $('image-format').value.toUpperCase();
-  $('export-chart').textContent = `Download ${active?.mode === 'map' ? 'map image' : 'chart'} (${name})`;
+  $('export-chart').textContent = `Download ${active?.mode === 'map' ? 'map image' : 'plot'} (${name})`;
   $('export-legend').textContent = `Download legend (${name})`;
   $('export-both').textContent = `Download both (${name})`;
 }
@@ -479,12 +726,96 @@ $('export-chart').addEventListener('click', () => exportImage('plot'));
 $('export-legend').addEventListener('click', () => exportImage('legend'));
 $('export-both').addEventListener('click', () => exportImage('both'));
 
-$('basemap').addEventListener('change', event => mapView?.setBasemap(event.target.value));
+$('basemap').addEventListener('change', event => {
+  chosenBasemap = event.target.value;
+  mapView?.setBasemap(chosenBasemap);
+  updatePlanControls();
+});
+const normalDegrees = value => Math.round((((value % 360) + 360) % 360) * 10) / 10 % 360;
+function showPlanBearing(bearing) {
+  const value = normalDegrees(bearing);
+  if (document.activeElement !== $('plan-bearing')) $('plan-bearing').value = value;
+  $('plan-bearing-range').value = value;
+  $('plan-bearing-range').setAttribute('aria-valuetext', `${value}°`);
+}
+function showPlanTransparency(value) {
+  $('plan-transparency').value = value;
+  $('plan-transparency-value').textContent = `${value}%`;
+  $('plan-transparency').setAttribute('aria-valuetext', `${value}%`);
+}
+// Floor plan options: transparency always, and an orientation prompt while the plan is the basemap.
+function updatePlanControls() {
+  $('basemap').querySelector('option[value="local"]').textContent = mapPlan ? 'No basemap (floor plan only)' : 'No basemap (local)';
+  $('plan-controls').hidden = !mapPlan;
+  if (!mapPlan) return;
+  $('plan-controls-title').textContent = `Floor plan: ${mapPlan.name}`;
+  showPlanTransparency(mapPlan.transparency || 0);
+  const asBasemap = Boolean(mapView?.planIsBasemap());
+  $('plan-orientation').hidden = !asBasemap;
+  const confirmed = Boolean(mapPlan.orientationConfirmed);
+  $('plan-orientation').classList.toggle('needs-confirmation', !confirmed);
+  const prompt = confirmed
+    ? 'Saved with this floor plan and used for its PowerPoint slides. Fine-tune it here or drag the compass on the map.'
+    : 'Is the floor plan the right way up? Rotate it until it reads correctly, then confirm. The orientation is saved with the floor plan and used for its PowerPoint slides.';
+  if ($('plan-orientation-prompt').textContent !== prompt) $('plan-orientation-prompt').textContent = prompt;
+  $('plan-confirm').hidden = confirmed;
+  $('plan-align').hidden = Boolean(mapPlan.planar);
+  showPlanBearing(mapView?.getBearing() || 0);
+}
+$('plan-transparency').addEventListener('input', event => {
+  const value = event.target.valueAsNumber;
+  showPlanTransparency(value);
+  mapView?.setPlanStyle({ transparency: value });
+  if (!mapPlan) return;
+  mapPlan.transparency = value;
+  savePlansSoon();
+});
+$('plan-bearing').addEventListener('change', event => {
+  const value = event.target.valueAsNumber;
+  if (Number.isFinite(value)) mapView?.setBearing(value);
+  showPlanBearing(mapView?.getBearing() || 0);
+  event.target.value = normalDegrees(mapView?.getBearing() || 0);
+});
+$('plan-bearing-range').addEventListener('input', event => mapView?.setBearing(event.target.valueAsNumber));
+for (const button of document.querySelectorAll('#plan-orientation [data-turn]')) {
+  button.addEventListener('click', () => mapView?.setBearing(mapView.getBearing() + Number(button.dataset.turn)));
+}
+$('plan-align').addEventListener('click', () => mapView?.alignToFloorPlan());
+$('plan-confirm').addEventListener('click', () => {
+  if (!mapPlan || !mapView) return;
+  mapPlan.bearing = mapView.getBearing();
+  mapPlan.orientationConfirmed = true;
+  persistIfKept();
+  updatePlanControls();
+  $('plan-bearing').focus();
+});
+$('legend-show-all').addEventListener('click', () => applyLegendFilter());
 $('map-legend').addEventListener('change', () => renderMap(true));
+const siteSliders = ['site-size', 'site-transparency'];
+const siteStyle = () => ({ size: $('site-size').valueAsNumber, transparency: $('site-transparency').valueAsNumber });
+function updateSiteControls() {
+  const days = active?.map?.snapshotDays;
+  $('site-controls').hidden = !days?.length;
+  if (days?.length) $('site-controls-title').textContent = `Sites: ${days.join(', ')}`;
+  $('site-pci-colors-field').hidden = !active?.map?.pciRat;
+  $('site-detected-only-field').hidden = !active?.map?.pciRat;
+  for (const id of ['show-hover-links', 'site-pci-colors', 'site-detected-only', ...siteSliders]) $(id).disabled = !$('show-sites').checked;
+}
+for (const id of siteSliders) {
+  $(id).addEventListener('input', event => {
+    const value = `${event.target.value}%`;
+    $(`${id}-value`).textContent = value;
+    event.target.setAttribute('aria-valuetext', value);
+    mapView?.setSiteStyle(siteStyle());
+  });
+}
 $('show-sites').addEventListener('change', event => {
+  updateSiteControls();
   mapView?.setCells(event.target.checked);
   renderSectorLegend();
 });
+$('show-hover-links').addEventListener('change', event => mapView?.setHoverLinks(event.target.checked));
+for (const id of ['site-pci-colors', 'site-detected-only']) $(id).addEventListener('change', refreshSiteOverlay);
 $('fit-map').addEventListener('click', () => mapView?.fit());
 async function exportMap(type) {
   const { map, key, title, groupSuffix } = active;
@@ -501,10 +832,12 @@ async function exportMap(type) {
 $('download-kml').addEventListener('click', () => exportMap('kml'));
 $('download-shp').addEventListener('click', () => exportMap('shapefile'));
 
-function renderCatalogs(messages = []) {
+function renderCatalogs(messages = [], needsDate = false) {
   list($('catalog-list'), [...snapshots.map(({ rat, day, filename, cells, skipped }) =>
     `${rat} · ${day} · ${filename} · ${format(cells.length)} cells${skipped ? ` (${format(skipped)} rows skipped)` : ''}`), ...messages]);
   $('catalog-list').hidden = !snapshots.length && !messages.length;
+  $('snapshot-date-field').hidden = !snapshots.length && !needsDate;
+  $('snapshot-gap-field').hidden = !snapshots.length;
   $('clear-catalogs').disabled = !snapshots.length;
   if (active?.mode === 'map') renderMap();
 }
@@ -518,6 +851,7 @@ $('catalogs').addEventListener('change', async event => {
   const date = $('snapshot-date').value;
   const messages = [];
   let added = 0;
+  let needsDate = false;
   for (const file of files) {
     $('catalog-status').textContent = `Reading ${file.name}…`;
     try {
@@ -527,35 +861,156 @@ $('catalogs').addEventListener('change', async event => {
       snapshots.push(snapshot);
       added++;
     } catch (error) {
+      if (error.message === snapshotDateRequired) needsDate = true;
       messages.push(`${file.name}: ${error.message}`);
     }
   }
   input.disabled = false;
   $('catalog-status').textContent = `Read ${added} of ${files.length} files. ${snapshots.length} dated snapshots available.`;
-  renderCatalogs(messages);
+  renderCatalogs(messages, needsDate);
   if (added && $('keep-imports').checked) await persistImports();
 });
 $('clear-catalogs').addEventListener('click', () => {
   snapshots = [];
+  $('snapshot-date').value = '';
   $('catalog-status').textContent = 'Cell snapshots cleared.';
   renderCatalogs();
   if ($('keep-imports').checked) void persistImports();
 });
 $('snapshot-gap').addEventListener('change', () => { if (active?.mode === 'map') renderMap(); });
 
-$('report').addEventListener('click', async () => {
+const baseName = name => name.split(/[\\/]/).pop().replace(/\.[^.]+$/, '').toLowerCase();
+
+function planFits(survey, plan) {
+  const located = Object.values(survey.geography).filter(entry => entry.coords).map(entry => entry.coords);
+  if (plan.planar) return !located.length;
+  if (!located.length) return true;
+  const [origin, right, down] = plan.corners;
+  const corners = [origin, right, down, [right[0] + down[0] - origin[0], right[1] + down[1] - origin[1]]];
+  const [west, east] = [Math.min(...corners.map(point => point[0])), Math.max(...corners.map(point => point[0]))];
+  const [south, north] = [Math.min(...corners.map(point => point[1])), Math.max(...corners.map(point => point[1]))];
+  const inside = located.filter(([lon, lat]) => lon >= west && lon <= east && lat >= south && lat <= north).length;
+  return inside >= located.length / 2;
+}
+
+// Places workbooks without a floor plan on a matching plan: same log name as the MRK first, then by location.
+function assignPlans(targets, candidates) {
+  let placed = 0;
+  for (const survey of targets) {
+    if (planFor(survey) || !candidates.length) continue;
+    const named = candidates.find(plan => plan.markerFile && baseName(plan.markerFile) === baseName(survey.filename) && planFits(survey, plan));
+    const plan = named || candidates.find(item => planFits(survey, item));
+    if (!plan) continue;
+    survey.planId = plan.id;
+    placed++;
+  }
+  return placed;
+}
+
+function renderPlans() {
+  $('plan-list').replaceChildren(...plans.map(plan => {
+    const item = document.createElement('li');
+    const label = document.createElement('span');
+    const button = document.createElement('button');
+    label.textContent = `${plan.name} · ${plan.planar ? `not georeferenced (${plan.units})` : 'georeferenced'} · `
+      + `${plan.markers.length ? `${format(plan.markers.length)} markers` : 'no markers'} · ${format(plan.width)}×${format(plan.height)} px`;
+    button.type = 'button';
+    button.textContent = '×';
+    button.setAttribute('aria-label', `Remove floor plan ${plan.name}`);
+    button.addEventListener('click', () => {
+      plans = plans.filter(item => item !== plan);
+      for (const survey of surveys) if (survey.planId === plan.id) delete survey.planId;
+      $('plan-status').textContent = `Removed floor plan ${plan.name}.`;
+      renderPlans();
+      renderSurvey(false);
+      persistIfKept();
+      $('plans').focus();
+    });
+    item.append(label, button);
+    return item;
+  }));
+  $('plan-list').hidden = !plans.length;
+  $('clear-plans').disabled = !plans.length;
+}
+
+$('plans').addEventListener('change', async event => {
+  const input = event.target;
+  const files = [...input.files];
+  if (!files.length) return;
+  input.value = '';
+  input.disabled = true;
+  $('clear-plans').disabled = true;
+  const tabs = files.filter(file => /\.tab$/i.test(file.name));
+  const images = files.filter(file => /\.(bmp|png|jpe?g)$/i.test(file.name));
+  const markers = files.filter(file => /\.mrk$/i.test(file.name));
+  const messages = [];
+  const added = [];
+  if (!tabs.length) messages.push('Select a .tab file together with its floor-plan image.');
+  for (const tab of tabs) {
+    $('plan-status').textContent = `Reading ${tab.name}…`;
+    try {
+      const imageName = /^\s*File\s+"([^"]+)"/im.exec(await tab.text())?.[1] || '';
+      const image = images.find(file => file.name.toLowerCase() === imageName.split(/[\\/]/).pop().toLowerCase())
+        || images.find(file => baseName(file.name) === baseName(tab.name)) || (tabs.length === 1 && images.length === 1 ? images[0] : null);
+      if (!image) throw new Error(`Also select the floor-plan image ${imageName || 'named in the TAB file'}.`);
+      const mrk = markers.find(file => baseName(file.name) === baseName(tab.name)) || (tabs.length === 1 && markers.length === 1 ? markers[0] : null);
+      $('plan-status').textContent = `Preparing floor plan ${image.name}…`;
+      const { plan } = await planRequest({ id: crypto.randomUUID(), tab, image, mrk });
+      added.push(plan);
+    } catch (error) {
+      messages.push(`${tab.name}: ${error.message}`);
+    }
+  }
+  plans.push(...added);
+  const placed = assignPlans(surveys, added);
+  input.disabled = false;
+  $('plan-status').textContent = `Read ${added.length} of ${tabs.length} floor plans.`
+    + (added.length ? ` ${placed ? `${placed} ${placed === 1 ? 'workbook' : 'workbooks'} placed on the new plans.` : 'Choose a floor plan for each indoor workbook in the imported workbook list.'}` : '')
+    + (messages.length ? ` ${messages.join(' ')}` : '');
+  renderPlans();
+  if (added.length) {
+    renderSurvey();
+    persistIfKept();
+  }
+});
+$('clear-plans').addEventListener('click', () => {
+  plans = [];
+  for (const survey of surveys) delete survey.planId;
+  $('plan-status').textContent = 'Floor plans cleared.';
+  renderPlans();
+  renderSurvey(false);
+  persistIfKept();
+  $('plans').focus();
+});
+
+reportOptions($('report'), viewSurveys, async ({ surveys: selectedSurveys, keys, workbookSections, thresholdOverrides, dividerTitles }) => {
   const location = $('location').value.trim() || 'Network survey';
   reporting = true;
   controls();
   $('status').textContent = 'Generating PowerPoint…';
   try {
+    const catalog = snapshots, gap = $('snapshot-gap');
+    if (catalog.length && !gap.validity.valid && selectedSurveys.some(survey => survey.metrics.some(metric => keys.includes(metric.key) && metric.geoCount))) {
+      throw new Error('Enter a whole number of days (0 or more) for the snapshot gap.');
+    }
+    const maps = await captureReportMaps({
+      surveys: selectedSurveys, plans, bearing: outdoorBearing, keys, snapshots: catalog, maxDays: gap.valueAsNumber, basemap: chosenBasemap,
+      workbookSections, thresholdOverrides,
+      showSites: $('show-sites').checked, siteStyle: siteStyle(), matchPci: $('site-pci-colors').checked,
+      thresholds: $('map-legend').checked, request: gisRequest,
+      progress: (done, total, title) => { $('status').textContent = `Capturing map ${done} of ${total}: ${title}…`; },
+    });
+    $('status').textContent = 'Assembling PowerPoint…';
     const { buffer } = await workerRequest(new Worker(new URL('./report.worker.js', import.meta.url), { type: 'module' }),
-      { location, surveys: surveys.map(({ filename, profile, metrics }) => ({
-        filename, profile, metrics: metrics.map(({ key, series, histogram, statistics }) => ({ key, series, histogram, statistics })),
+      { location, maps, workbookSections, dividerTitles, surveys: selectedSurveys.map(({ filename, profile, days, metrics, sourceIndex }) => ({
+        filename, profile, days, sourceIndex, metrics: metrics.filter(metric => keys.includes(metric.key))
+          .map(({ key, series, histogram, statistics }) => ({ key, series, histogram, statistics })),
       })), keys });
     download(new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' }),
       `${filename(location)}-report.pptx`);
-    $('status').textContent = 'PowerPoint download started.';
+    const missing = maps.filter(map => map.missingBasemap).length;
+    $('status').textContent = 'PowerPoint download started.' + (missing
+      ? ` Basemap unavailable on ${missing} ${missing === 1 ? 'slide' : 'slides'}; the survey points are included.` : '');
   } catch (error) {
     $('status').textContent = `PowerPoint export failed: ${error.message}`;
   } finally {
@@ -586,16 +1041,21 @@ $('keep-imports').addEventListener('change', persistImports);
 async function restoreImports() {
   controls();
   $('catalogs').disabled = true;
+  $('plans').disabled = true;
   try {
     const saved = await loadImports();
     $('keep-imports').checked = Boolean(saved);
     if (saved) {
-      ({ surveys, snapshots } = saved);
+      ({ surveys, snapshots, plans = [] } = saved);
+      if (!saved.workbookOrderSaved) surveys = orderWorkbookBatch(surveys);
       renderCatalogs();
+      renderPlans();
       renderSurvey();
       if (surveys.length) $('status').textContent = `Restored ${surveys.length} workbooks. ${keys.length} KPIs available.`;
       if (snapshots.length) $('catalog-status').textContent = `Restored ${snapshots.length} dated snapshots.`;
+      if (plans.length) $('plan-status').textContent = `Restored ${plans.length} floor ${plans.length === 1 ? 'plan' : 'plans'}.`;
       storageStatus('Imports saved locally in this browser.');
+      if (!saved.workbookOrderSaved) await persistImports();
     }
     $('keep-imports').disabled = false;
   } catch (error) {
@@ -603,6 +1063,7 @@ async function restoreImports() {
   } finally {
     restoring = false;
     $('catalogs').disabled = false;
+    $('plans').disabled = false;
     controls();
   }
 }

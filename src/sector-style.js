@@ -23,18 +23,45 @@ export function carrierCode(site, ...labels) {
   return '';
 }
 
-export const sectorKey = ({ rat, coords, azimuth, beamwidth, carrier }) =>
-  JSON.stringify([rat, coords, azimuth, beamwidth, carrier]);
+export const sectorKey = ({ rat, coords, azimuth, beamwidth, carrier, pci }) =>
+  JSON.stringify([rat, coords, azimuth, beamwidth, carrier, pci]);
 
-export function sectorColor({ rat, carrier }) {
-  return carrierColors.get(carrier) || (rat === 'NR' ? '#0D54FF' : '#A94318');
+export const siteSectorKey = ({ properties: { RAT }, geometry: { coordinates }, angles, carrier, pci }) =>
+  sectorKey({ rat: RAT, coords: coordinates, ...angles, carrier, pci });
+
+export function linkedPciCells({ sites, pciRat }, samples) {
+  const linked = new Set();
+  for (const { siteLinks } of samples.features) {
+    for (const { siteId } of siteLinks || []) linked.add(siteId);
+  }
+  return sites.features.filter(site => site.properties.RAT === pciRat && linked.has(site.id));
+}
+
+export function detectedCellOverlay({ sites, sectors, pciRat }, samples) {
+  const features = linkedPciCells({ sites, pciRat }, samples);
+  const keys = new Set(features.filter(site => site.angles).map(siteSectorKey));
+  return { sites: { ...sites, features }, sectors: sectors.filter(sector => keys.has(sectorKey(sector))) };
+}
+
+export function sectorColor({ rat, carrier, pciColor }) {
+  return pciColor || carrierColors.get(carrier) || (rat === 'NR' ? '#0D54FF' : '#A94318');
+}
+
+export function mapSectors({ sectors, pciRat, categoryLegend }, matchPci) {
+  if (!matchPci || !pciRat) return sectors;
+  const colors = new Map(categoryLegend.map(({ value, color }) => [value, color]));
+  return sectors.map(sector => {
+    const pciColor = sector.rat === pciRat && Number.isInteger(sector.pci) ? colors.get(sector.pci) : undefined;
+    return pciColor ? { ...sector, pciColor } : sector;
+  });
 }
 
 export function sectorLegendGroups(sectors) {
   return ['LTE', 'NR'].flatMap(rat => {
     const entries = new Map();
     for (const sector of sectors) {
-      if (sector.rat !== rat) continue;
+      // PCI-coloured cells are already explained by the KPI legend.
+      if (sector.rat !== rat || sector.pciColor) continue;
       const code = sector.carrier === 'DA' ? 'D' : sector.carrier;
       const band = bands[rat].get(code);
       entries.set(code, { label: band ? `${code} ${band} MHz` : code || 'Unknown', color: sectorColor(sector), band });
