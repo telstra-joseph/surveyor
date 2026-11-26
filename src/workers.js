@@ -1,16 +1,29 @@
-export function workerRequest(worker, data, onProgress) {
+export function workerRequest(worker, data, onProgress, signal) {
   return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      worker.terminate();
+      signal?.removeEventListener('abort', abort);
+    };
+    const abort = () => {
+      cleanup();
+      reject(signal.reason);
+    };
+    if (signal?.aborted) {
+      abort();
+      return;
+    }
+    signal?.addEventListener('abort', abort, { once: true });
     worker.onmessage = ({ data: result }) => {
       if (result.progress) {
         onProgress?.(result.progress);
         return;
       }
-      worker.terminate();
+      cleanup();
       if (result.error) reject(new Error(result.error));
       else resolve(result);
     };
     const fail = event => {
-      worker.terminate();
+      cleanup();
       reject(new Error(event.message || 'The background worker could not finish.'));
     };
     worker.onerror = fail;
@@ -18,7 +31,7 @@ export function workerRequest(worker, data, onProgress) {
     try {
       worker.postMessage(data);
     } catch (error) {
-      worker.terminate();
+      cleanup();
       reject(error);
     }
   });

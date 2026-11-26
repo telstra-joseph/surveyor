@@ -110,6 +110,16 @@ test('worker progress keeps the request open until its final response', async ()
   assert.equal(terminated, true);
 });
 
+test('stopping a worker request terminates the worker and rejects the export', async () => {
+  let terminated = false;
+  const worker = { postMessage() {}, terminate() { terminated = true; } };
+  const controller = new AbortController();
+  const result = workerRequest(worker, {}, undefined, controller.signal);
+  controller.abort();
+  await assert.rejects(result, { name: 'AbortError' });
+  assert.equal(terminated, true);
+});
+
 test('restores saved KPI positions and adds newly available KPIs in their default order', () => {
   assert.deepEqual(applySavedKpiOrder(
     ['Technology_Mode', 'NR_UE_PCI_0', 'LTE_UE_RSRP', 'NR_UE_SINR_0', 'LTE_UE_PCI'],
@@ -267,6 +277,33 @@ test('PowerPoint keeps custom floor dividers and KPI slides in distinct sections
   assert.match(deck, /name="Level 1"[^>]*><p14:sldIdLst><p14:sldId id="257"\/><p14:sldId id="258"\/>/);
   assert.match(deck, /name="Level 1"[^>]*><p14:sldIdLst><p14:sldId id="259"\/><p14:sldId id="260"\/>/);
   assert.equal(zip.file('ppt/slides/slide6.xml'), null);
+});
+
+test('PowerPoint fits OpenStreetMap attribution inside the lower-right corner of a narrow map', async () => {
+  const key = 'LTE_UE_RSRP';
+  const attribution = 'OpenStreetMap contributors';
+  const zip = await JSZip.loadAsync(await makeReport({
+    location: 'Test site', keys: [key], surveys: [{ filename: 'UE1.xlsx', metrics: [] }],
+    maps: [{
+      key, workbookIndex: 0, width: 140, height: 600,
+      image: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jFPsAAAAASUVORK5CYII=',
+      legend: { title: 'KPI thresholds', entries: [] }, attribution,
+    }],
+  }));
+  const slide = await zip.file('ppt/slides/slide2.xml').async('string');
+  const picture = slide.match(/<p:pic>.*?<\/p:pic>/s)[0];
+  const credit = [...slide.matchAll(/<p:sp>.*?<\/p:sp>/gs)].find(([shape]) => shape.includes(attribution))[0];
+  const bounds = shape => shape.match(/<a:off x="(\d+)" y="(\d+)"\/>\s*<a:ext cx="(\d+)" cy="(\d+)"\/>/).slice(1).map(Number);
+  const [x, y, width, height] = bounds(picture);
+  const [left, top, creditWidth, creditHeight] = bounds(credit);
+  const inset = .06 * 914400;
+  assert.ok(left > x && top > y);
+  assert.ok(Math.abs(x + width - (left + creditWidth) - inset) < 2);
+  assert.ok(Math.abs(y + height - (top + creditHeight) - inset) < 2);
+  assert.match(credit, /wrap="none"/);
+  const fontSize = Number(credit.match(/<a:rPr[^>]*\bsz="(\d+)"/)[1]) / 100;
+  assert.ok(fontSize > 0 && fontSize < 7);
+  assert.ok(fontSize * attribution.length / 72 * 914400 < creditWidth);
 });
 
 test('PowerPoint centres a tightly cropped floor plan in the map area without online basemap text', async () => {

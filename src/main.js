@@ -6,12 +6,12 @@ import { cellDescription, createMapView } from './map-view.js';
 import { supportsMapThresholds } from './map-thresholds.js';
 import { detectedCellOverlay, linkedPciCells, mapSectors, sectorLegendGroups } from './sector-style.js';
 import { mapImage, stackImages, svgImage } from './image-export.js';
-import { loadImports, loadWorkspace, saveImports, saveWorkspace } from './saved-imports.js';
+import { hasWorkspace, loadImports, loadWorkspace, saveImports, saveWorkspace } from './saved-imports.js';
 import { parseWorkspace, validateWorkspace, workspaceSnapshot } from './workspace.js';
 import { captureReportMaps } from './report-maps.js';
 import { reportOptions } from './report-options.js';
 import { sortableList } from './sortable-list.js';
-import { mapWorkbook, snapshotDateRequired } from './geo.js';
+import { mapWorkbook } from './geo.js';
 import { positionSurvey } from './indoor.js';
 
 const $ = id => document.getElementById(id);
@@ -88,7 +88,7 @@ function storeBearing(bearing) {
   mapPlan.bearing = bearing;
   savePlansSoon();
 }
-const gisRequest = data => workerRequest(new Worker(new URL('./gis.worker.js', import.meta.url), { type: 'module' }), data);
+const gisRequest = (data, signal) => workerRequest(new Worker(new URL('./gis.worker.js', import.meta.url), { type: 'module' }), data, undefined, signal);
 const planRequest = data => workerRequest(new Worker(new URL('./plan.worker.js', import.meta.url), { type: 'module' }), data);
 const planFor = survey => survey && plans.find(plan => plan.id === survey.planId);
 const positioned = new WeakMap();
@@ -264,6 +264,7 @@ function controls() {
   $('workspace').disabled = restoring || importing || reporting || $('catalogs').disabled || $('plans').disabled;
   $('report').disabled = importing || reporting || !surveys.length;
   $('clear').disabled = importing || reporting || !surveys.length;
+  $('clear').hidden = !surveys.length;
   for (const control of $('source-list').querySelectorAll('button, select')) control.disabled = importing || reporting;
 }
 
@@ -471,14 +472,9 @@ async function renderMap(preserveSelection = false) {
   updatePlanControls();
   if (!preserveSelection || !mapView.selectedDevice()) mapView.clear();
   sourceStatus('map-status', 'Preparing map…');
-  const gap = $('snapshot-gap');
-  if (snapshots.length && !planar && !gap.validity.valid) {
-    sourceStatus('map-status', 'Enter a whole number of days (0 or more) for the snapshot gap.', true);
-    return;
-  }
   try {
     const { views } = active;
-    const { map } = await gisRequest({ type: 'map', key: active.key, snapshots: planar ? [] : snapshots, maxDays: gap.valueAsNumber, legendMode,
+    const { map } = await gisRequest({ type: 'map', key: active.key, snapshots: planar ? [] : snapshots, legendMode,
       workbooks: active.items.map(({ index, tag, color }) => mapWorkbook(views[index], active.key, tag, color)) });
     if (request !== mapSequence) return;
     active.map = map;
@@ -954,15 +950,21 @@ async function exportMap(type) {
 $('download-kml').addEventListener('click', () => exportMap('kml'));
 $('download-shp').addEventListener('click', () => exportMap('shapefile'));
 
-function renderCatalogs(messages = [], needsDate = false) {
-  list($('catalog-list'), snapshots.map(({ rat, day, filename, cells, skipped }) =>
-    `${rat} · ${day} · ${filename} · ${format(cells.length)} cells${skipped ? ` (${format(skipped)} rows skipped)` : ''}`));
+function renderCatalogs(messages = []) {
+  $('catalog-list').replaceChildren(...snapshots.map(({ rat, day, filename, cells, skipped }) => {
+    const item = document.createElement('li');
+    const technology = document.createElement('strong');
+    const date = document.createElement('strong');
+    technology.textContent = rat;
+    date.textContent = day;
+    item.append(technology, ' · ', date, ` · ${filename} · ${format(cells.length)} cells${skipped ? ` (${format(skipped)} rows skipped)` : ''}`);
+    return item;
+  }));
   $('catalog-list').hidden = !snapshots.length;
   list($('catalog-issues'), messages);
   $('catalog-issues').hidden = !messages.length;
-  $('snapshot-date-field').hidden = !snapshots.length && !needsDate;
-  $('snapshot-gap-field').hidden = !snapshots.length;
   $('clear-catalogs').disabled = !snapshots.length;
+  $('clear-catalogs').hidden = !snapshots.length;
   if (active?.mode === 'map') renderMap();
 }
 $('catalogs').addEventListener('change', async event => {
@@ -973,62 +975,33 @@ $('catalogs').addEventListener('change', async event => {
   input.disabled = true;
   $('clear-catalogs').disabled = true;
   controls();
-  const date = $('snapshot-date').value;
   const messages = [];
   let added = 0;
-  let needsDate = false;
   for (const file of files) {
     $('catalog-status').textContent = `Reading ${file.name}…`;
     try {
       if (!/\.csv$/i.test(file.name)) throw new Error('Select an Actix .csv file.');
-      const { snapshot } = await gisRequest({ type: 'catalog', file, date });
+      const { snapshot } = await gisRequest({ type: 'catalog', file });
       snapshots = snapshots.filter(item => item.rat !== snapshot.rat || item.day !== snapshot.day);
       snapshots.push(snapshot);
       added++;
     } catch (error) {
-      if (error.message === snapshotDateRequired) needsDate = true;
       messages.push(`${file.name}: ${error.message}`);
     }
   }
   input.disabled = false;
   $('catalog-status').textContent = `Read ${added} of ${files.length} files. ${snapshots.length} dated snapshots available.`;
-  renderCatalogs(messages, needsDate);
+  renderCatalogs(messages);
   if (added && $('keep-imports').checked) await persistImports();
   controls();
 });
 $('clear-catalogs').addEventListener('click', () => {
   snapshots = [];
-  $('snapshot-date').value = '';
   $('catalog-status').textContent = 'Cell snapshots cleared.';
   renderCatalogs();
   if ($('keep-imports').checked) void persistImports();
+  $('catalogs').focus();
 });
-const snapshotGap = $('snapshot-gap');
-const gapMotion = $('snapshot-gap-motion');
-const reduceGapMotion = matchMedia('(prefers-reduced-motion: reduce)');
-let previousGap = snapshotGap.valueAsNumber;
-let gapAnimation;
-function stopGapAnimation() {
-  gapAnimation?.cancel();
-  gapAnimation = undefined;
-  gapMotion.parentElement.classList.remove('is-rolling');
-}
-snapshotGap.addEventListener('input', event => {
-  const next = snapshotGap.valueAsNumber;
-  const direction = Math.sign(next - previousGap);
-  previousGap = next;
-  stopGapAnimation();
-  if (!direction || event.inputType || reduceGapMotion.matches) return;
-  gapMotion.textContent = snapshotGap.value;
-  gapMotion.parentElement.classList.add('is-rolling');
-  gapAnimation = gapMotion.animate([
-    { transform: `translateY(${direction * .35}em)`, opacity: 0 },
-    { transform: 'translateY(0)', opacity: 1 },
-  ], { duration: 170, easing: 'ease-out' });
-  gapAnimation.onfinish = stopGapAnimation;
-});
-reduceGapMotion.addEventListener('change', stopGapAnimation);
-snapshotGap.addEventListener('change', () => { if (active?.mode === 'map') renderMap(); });
 
 const baseName = name => name.split(/[\\/]/).pop().replace(/\.[^.]+$/, '').toLowerCase();
 
@@ -1083,6 +1056,7 @@ function renderPlans() {
   }));
   $('plan-list').hidden = !plans.length;
   $('clear-plans').disabled = !plans.length;
+  $('clear-plans').hidden = !plans.length;
 }
 
 $('plans').addEventListener('change', async event => {
@@ -1137,24 +1111,30 @@ $('clear-plans').addEventListener('click', () => {
 });
 
 const reportSurveys = () => viewSurveys().map(survey => ({ ...survey, planName: planFor(survey)?.name }));
+let reportController, reportStatusTimer;
+const reportStop = $('report-stop');
+reportStop.addEventListener('click', () => {
+  reportStop.disabled = true;
+  reportController?.abort();
+});
 reportOptions($('report'), reportSurveys, async ({ surveys: selectedSurveys, keys, sections, thresholdOverrides }) => {
   const location = $('location').value.trim() || 'Network survey';
   const reportStatus = $('report-status');
   const reportProgress = $('report-progress');
+  const progressRow = $('report-progress-row');
+  const { signal } = reportController = new AbortController();
+  clearTimeout(reportStatusTimer);
   reporting = true;
   controls();
   reportStatus.textContent = 'Generating PowerPoint…';
   reportProgress.value = 0;
-  reportProgress.hidden = false;
+  reportStop.disabled = false;
+  progressRow.hidden = false;
   try {
-    const catalog = snapshots, gap = $('snapshot-gap');
-    if (catalog.length && !gap.validity.valid && selectedSurveys.some(survey => survey.metrics.some(metric => keys.includes(metric.key) && metric.geoCount))) {
-      throw new Error('Enter a whole number of days (0 or more) for the snapshot gap.');
-    }
     let captureShare = 0;
     const maps = await captureReportMaps({
-      surveys: selectedSurveys, plans, bearing: outdoorBearing, keys, snapshots: catalog, maxDays: gap.valueAsNumber, basemap: chosenBasemap,
-      sections, thresholdOverrides,
+      surveys: selectedSurveys, plans, bearing: outdoorBearing, keys, snapshots, basemap: chosenBasemap,
+      sections, thresholdOverrides, signal,
       showSites: $('show-sites').checked, siteStyle: siteStyle(), matchPci: $('site-pci-colors').checked,
       thresholds: $('map-legend').checked, request: gisRequest,
       progress: (current, total, title) => {
@@ -1163,6 +1143,7 @@ reportOptions($('report'), reportSurveys, async ({ surveys: selectedSurveys, key
         reportStatus.textContent = `Capturing map ${current} of ${total}: ${title}…`;
       },
     });
+    signal.throwIfAborted();
     reportStatus.textContent = 'Assembling PowerPoint…';
     reportProgress.value = captureShare;
     const { buffer } = await workerRequest(new Worker(new URL('./report.worker.js', import.meta.url), { type: 'module' }),
@@ -1172,18 +1153,23 @@ reportOptions($('report'), reportSurveys, async ({ surveys: selectedSurveys, key
       })), keys }, ({ completed, total }) => {
         reportProgress.value = captureShare + (95 - captureShare) * completed / total;
         if (completed === total) reportStatus.textContent = 'Packaging PowerPoint…';
-      });
+      }, signal);
+    signal.throwIfAborted();
     download(new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' }),
       `${filename(location)}-report.pptx`);
     const missing = maps.filter(map => map.missingBasemap).length;
     reportStatus.textContent = 'PowerPoint download started.' + (missing
       ? ` Basemap unavailable on ${missing} ${missing === 1 ? 'slide' : 'slides'}; the survey points are included.` : '');
+    reportStatusTimer = setTimeout(() => { reportStatus.textContent = ''; }, 10000);
   } catch (error) {
-    reportStatus.textContent = `PowerPoint export failed: ${error.message}`;
+    reportStatus.textContent = signal.aborted ? 'PowerPoint export stopped.' : `PowerPoint export failed: ${error.message}`;
   } finally {
-    reportProgress.hidden = true;
+    const restoreFocus = signal.aborted || document.activeElement === reportStop;
+    progressRow.hidden = true;
+    reportController = undefined;
     reporting = false;
     controls();
+    if (restoreFocus) $('report').focus();
   }
 });
 
@@ -1206,7 +1192,7 @@ $('install').addEventListener('click', async () => {
 window.addEventListener('appinstalled', () => { $('install').hidden = true; });
 
 const workspaceDialog = $('workspace-dialog');
-const workspaceValues = ['image-format', 'snapshot-date', 'snapshot-gap', ...siteSliders];
+const workspaceValues = ['image-format', ...siteSliders];
 const workspaceChecks = ['map-legend', 'show-sites', 'show-hover-links', 'site-pci-colors', 'site-detected-only'];
 const readControls = (ids, property) => Object.fromEntries(ids.map(id => [id, $(id)[property]]));
 function currentWorkspace() {
@@ -1234,8 +1220,6 @@ async function restoreWorkspace({ imports, view }) {
   themePreference = view.theme;
   applyTheme();
   for (const id of workspaceValues) $(id).value = view.values[id] ?? $(id).defaultValue;
-  stopGapAnimation();
-  previousGap = snapshotGap.valueAsNumber;
   for (const id of workspaceChecks) $(id).checked = view.checks[id] ?? $(id).defaultChecked;
   for (const id of siteSliders) $(id).dispatchEvent(new Event('input'));
   mapView?.setHoverLinks($('show-hover-links').checked);
@@ -1269,11 +1253,17 @@ function workspaceAction(id, action) {
     }
   });
 }
-$('workspace').addEventListener('click', () => {
+$('workspace').addEventListener('click', async () => {
   $('workspace-file').value = '';
   $('workspace-open').disabled = true;
   for (const id of workspaceActions) $(`${id}-status`).textContent = '';
+  $('workspace-restore').hidden = true;
   workspaceDialog.showModal();
+  try {
+    if (await hasWorkspace()) $('workspace-restore').hidden = false;
+  } catch (error) {
+    $('workspace-restore-status').textContent = `Could not check for a browser save: ${error.message}`;
+  }
 });
 workspaceDialog.addEventListener('cancel', event => { if (workspaceBusy) event.preventDefault(); });
 $('workspace-file').addEventListener('change', () => {
@@ -1282,6 +1272,7 @@ $('workspace-file').addEventListener('change', () => {
 });
 workspaceAction('workspace-save', async () => {
   await saveWorkspace(currentWorkspace());
+  $('workspace-restore').hidden = false;
   return 'Workspace saved in this browser.';
 });
 workspaceAction('workspace-download', () => {
@@ -1292,7 +1283,10 @@ workspaceAction('workspace-download', () => {
 });
 workspaceAction('workspace-restore', async () => {
   const saved = await loadWorkspace();
-  if (!saved) throw new Error('No workspace has been saved in this browser yet.');
+  if (!saved) {
+    $('workspace-restore').hidden = true;
+    throw new Error('No workspace has been saved in this browser yet.');
+  }
   await restoreWorkspace(validateWorkspace(saved));
   return 'Workspace restored from this browser.';
 });

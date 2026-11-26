@@ -429,7 +429,7 @@ test('maps same-row GPS and exports identity-based matches', async () => {
   ]);
   const survey = await parseWorkbook(await workbook.xlsx.writeBuffer(), 'sample <survey>.xlsx');
   const map = mapFeatures({ workbooks: [{ survey, tag: 'S1', color: '#000000' }],
-    key: 'LTE_UE_RSRP', maxDays: 7, snapshots: [parseActix(lte, 'actix.csv', '2026-10-13')] });
+    key: 'LTE_UE_RSRP', snapshots: [parseActix(lte, 'actix 2026-10-13.csv')] });
   const points = map.samples.features.map(({ properties }) => properties);
   assert.deepEqual(points.map(p => [p.L_MATCH, p.L_CELL, p.L_COUNT]), [
     ['Exact ID', '987', 1], ['Exact ID', '987', 1], ['Unmatched', '', null],
@@ -545,7 +545,7 @@ test('matches unidentified logs as assumed Telstra but skips logs with non-Telst
     { device: 'UE Vodafone', result: 'Skipped: non-Telstra evidence' },
     { device: 'UE unknown', result: 'Exact ID', network: 'Telstra (assumed)' },
   ];
-  const snapshots = [parseActix(lte, 'actix.csv', '2026-10-13')];
+  const snapshots = [parseActix(lte, 'actix 2026-10-13.csv')];
   for (const { device, plmn, result, network = 'Non-Telstra evidence' } of cases) {
     const workbook = new ExcelJS.Workbook();
     workbook.addWorksheet('Series Formatted Data').addRows([

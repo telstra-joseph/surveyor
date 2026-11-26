@@ -26,5 +26,7 @@ export const loadImports = () => transfer('readonly', store => store.get('worksp
 export const saveImports = imports => transfer('readwrite', store => imports
   ? store.put(imports, 'workspace') : store.delete('workspace'));
 
-export const loadWorkspace = () => transfer('readonly', store => store.get('manual-workspace'));
-export const saveWorkspace = workspace => transfer('readwrite', store => store.put(workspace, 'manual-workspace'));
+const manualWorkspaceKey = 'manual-workspace';
+export const hasWorkspace = async () => (await transfer('readonly', store => store.getKey(manualWorkspaceKey))) !== undefined;
+export const loadWorkspace = () => transfer('readonly', store => store.get(manualWorkspaceKey));
+export const saveWorkspace = workspace => transfer('readwrite', store => store.put(workspace, manualWorkspaceKey));

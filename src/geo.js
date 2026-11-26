@@ -53,11 +53,9 @@ function sectorAngles(row) {
   return azimuth >= 0 && azimuth <= 360 ? { azimuth: azimuth % 360, beamwidth } : null;
 }
 
-export const snapshotDateRequired = 'No valid snapshot date in filename. Enter a date override and select the file again.';
-
-export function parseActix(text, filename, override) {
-  const day = isoDay(override || filename.match(/\d{4}-\d{2}-\d{2}(?=[ _T.]|$)/)?.[0]);
-  if (!day) throw new Error(snapshotDateRequired);
+export function parseActix(text, filename) {
+  const day = isoDay(filename.match(/\d{4}-\d{2}-\d{2}(?=[ _T.]|$)/)?.[0]);
+  if (!day) throw new Error('No valid snapshot date in filename. Include the date as YYYY-MM-DD and select the file again.');
   const { data, errors, meta } = Papa.parse(text, { header: true, skipEmptyLines: 'greedy', transformHeader: field => field.trim().toUpperCase() });
   if (errors.length) throw new Error(`CSV could not be read: ${errors[0].message}`);
   const columns = new Set(meta.fields);
@@ -181,7 +179,7 @@ function matchCell({ ids, pairs }, [id, pci, channel], coords) {
     km: Number.isFinite(km) ? Math.round(km * 1000) / 1000 : null };
 }
 
-export function mapFeatures({ workbooks, snapshots, key, maxDays, legendMode = 'auto', thresholdOverride }) {
+export function mapFeatures({ workbooks, snapshots, key, maxDays = 7, legendMode = 'auto', thresholdOverride }) {
   const indexes = new Map(), dates = new Map(), sites = new Map();
   const sectors = new Map(), sectorGroups = new Map();
   const features = [];

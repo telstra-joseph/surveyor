@@ -14,8 +14,9 @@ const dataUrl = blob => new Promise((resolve, reject) => {
   reader.readAsDataURL(blob);
 });
 
-export async function captureReportMaps({ surveys, plans = [], bearing = 0, keys, snapshots, maxDays, basemap,
-  showSites, siteStyle, matchPci, thresholds, sections, thresholdOverrides = {}, request, progress }) {
+export async function captureReportMaps({ surveys, plans = [], bearing = 0, keys, snapshots, basemap,
+  showSites, siteStyle, matchPci, thresholds, sections, thresholdOverrides = {}, request, progress, signal }) {
+  signal.throwIfAborted();
   const jobsFor = workbookIndexes => {
     const workbooks = workbookIndexes.map(index => surveys[index]);
     return keys.flatMap(key => datasets(workbooks, key, 'map')
@@ -51,26 +52,42 @@ export async function captureReportMaps({ surveys, plans = [], bearing = 0, keys
       // Georeferenced indoor PCI and channel maps use Actix legend labels without rendering site overlays.
       const catalog = !plan ? snapshots : planar ? [] : snapshots.filter(({ rat }) => radioFields[rat].slice(1).includes(key));
       const { map } = await request({
-        type: 'map', key, snapshots: catalog, maxDays,
+        type: 'map', key, snapshots: catalog,
         legendMode: multipleWorkbooks && supportsMapThresholds(key) ? (thresholds ? 'thresholds' : 'ue') : 'auto',
         thresholdOverride: Object.hasOwn(thresholdOverrides, key) ? thresholdOverrides[key] : undefined,
         workbooks: [mapWorkbook(surveys[workbookIndex], key, item.tag, item.color)],
-      });
+      }, signal);
+      signal.throwIfAborted();
       if (!map.samples.features.length) continue;
       const sectors = mapSectors(map, matchPci);
       view.render({ ...map, sectors }, showSites && !plan, false);
       view.setBasemap(mapBasemap);
       const deadline = Date.now() + 4000;
-      while (view.tilesLoading() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 80));
-      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      while (view.tilesLoading() && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 80));
+        signal.throwIfAborted();
+      }
+      await new Promise(resolve => {
+        let frame;
+        const finish = () => {
+          cancelAnimationFrame(frame);
+          signal.removeEventListener('abort', finish);
+          resolve();
+        };
+        signal.addEventListener('abort', finish, { once: true });
+        frame = requestAnimationFrame(() => { frame = requestAnimationFrame(finish); });
+      });
+      signal.throwIfAborted();
       const capture = mapImage(element, title, mapBasemap !== 'local', { cropToFloorPlan: Boolean(plan) });
       const legend = mapPointLegend(key, map, [item]);
       if (legend.showCounts) {
         legend.entries = mapLegendFilter(map, legend.entries).entries.map(entry => mapLegendExportEntry(entry, true));
       }
+      const image = await dataUrl(await svgImage(capture.svg, 'png'));
+      signal.throwIfAborted();
       maps.push({
         key, workbookIndex, plan: plan?.name, width: capture.width, height: capture.height,
-        image: await dataUrl(await svgImage(capture.svg, 'png')),
+        image,
         legend,
         attribution: capture.attribution, missingBasemap: mapBasemap !== 'local' && !capture.hasBasemap,
       });

@@ -139,9 +139,15 @@ export async function makeReport({ location, surveys, keys, maps = [], sections 
       x: legendX, y: 6.13, w: legendWidth, h: .2, fontSize: 9,
     });
     if (!map.plan && map.attribution) {
-      const creditWidth = Math.min(w - .1, Math.max(1.5, map.attribution.length * .047));
-      addText(slide, map.attribution, { x: x + w - creditWidth - .05, y: y + .05, w: creditWidth, h: .18,
-        fontSize: 8, align: 'right', fit: 'shrink', margin: .025, fill: { color: hex(theme.paper) } });
+      const inset = Math.min(.06, w / 8, h / 8);
+      const creditHeight = Math.min(.16, h - 2 * inset);
+      const creditWidth = Math.min(w - 2 * inset, map.attribution.length * .1 + 2 * inset);
+      const fontSize = Math.min(7, (creditWidth - inset) * 72 / map.attribution.length, creditHeight * 54);
+      addText(slide, map.attribution, {
+        x: x + w - creditWidth - inset, y: y + h - creditHeight - inset, w: creditWidth, h: creditHeight,
+        fontSize, align: 'right', valign: 'mid', wrap: false, fit: 'shrink', margin: [0, inset * 36, 0, inset * 36],
+        fill: { color: hex(theme.paper) },
+      });
     } else if (!map.plan && map.missingBasemap) {
       addText(slide, 'Basemap unavailable', { x: .54, y: 6.82, w: 2, h: .14, fontSize: 8 });
     }

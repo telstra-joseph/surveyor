@@ -4,7 +4,7 @@ import { makeKml, makeShapefile } from './gis-export.js';
 self.onmessage = async ({ data }) => {
   try {
     if (data.type === 'catalog') {
-      self.postMessage({ snapshot: parseActix(await data.file.text(), data.file.name, data.date) });
+      self.postMessage({ snapshot: parseActix(await data.file.text(), data.file.name) });
     } else if (data.type === 'map') {
       self.postMessage({ map: mapFeatures(data) });
     } else if (data.type === 'kml') {
