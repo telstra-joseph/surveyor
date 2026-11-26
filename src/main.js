@@ -6,7 +6,8 @@ import { cellDescription, createMapView } from './map-view.js';
 import { supportsMapThresholds } from './map-thresholds.js';
 import { detectedCellOverlay, linkedPciCells, mapSectors, sectorLegendGroups } from './sector-style.js';
 import { mapImage, stackImages, svgImage } from './image-export.js';
-import { loadImports, saveImports } from './saved-imports.js';
+import { loadImports, loadWorkspace, saveImports, saveWorkspace } from './saved-imports.js';
+import { parseWorkspace, validateWorkspace, workspaceSnapshot } from './workspace.js';
 import { captureReportMaps } from './report-maps.js';
 import { reportOptions } from './report-options.js';
 import { sortableList } from './sortable-list.js';
@@ -248,6 +249,7 @@ function renderSectorLegend() {
 
 function controls() {
   $('files').disabled = restoring || importing || reporting;
+  $('workspace').disabled = restoring || importing || reporting || $('catalogs').disabled || $('plans').disabled;
   $('report').disabled = importing || reporting || !surveys.length;
   $('clear').disabled = importing || reporting || !surveys.length;
   for (const control of $('source-list').querySelectorAll('button, select')) control.disabled = importing || reporting;
@@ -494,7 +496,7 @@ async function renderMap(preserveSelection = false) {
   }
 }
 
-function renderGroups(preserveSelection = false) {
+function renderGroups(preserveSelection = false, preferredGroup = 0) {
   const groups = groupDatasets(datasets(viewSurveys(), $('metric').value, $('mode').value));
   const select = $('workbook-group');
   select.replaceChildren();
@@ -505,6 +507,7 @@ function renderGroups(preserveSelection = false) {
     select.add(new Option(`${first === last ? first : `${first}–${last}`}${plan ? ` · ${plan.name}` : ''}`));
   }
   $('workbook-groups').hidden = groups.length <= 1;
+  if (preferredGroup < groups.length) select.selectedIndex = preferredGroup;
   if (preserveSelection) {
     const device = mapView?.selectedDevice();
     const index = groups.findIndex(items => items.some(item => item.tag === device));
@@ -514,13 +517,13 @@ function renderGroups(preserveSelection = false) {
   renderChart(preserveSelection);
 }
 
-function renderModes(preferred, preserveSelection = false) {
+function renderModes(preferred, preserveSelection = false, preferredGroup = 0) {
   const key = $('metric').value, views = viewSurveys();
   const available = Object.keys(modes).filter(mode => datasets(views, key, mode).length);
   $('mode').replaceChildren(...available.map(mode => new Option(modes[mode], mode)));
   if (available.includes(preferred)) $('mode').value = preferred;
   else if (key === callDropKey && available.includes('series')) $('mode').value = 'series';
-  renderGroups(preserveSelection && $('mode').value === 'map');
+  renderGroups(preserveSelection && $('mode').value === 'map', preferredGroup);
 }
 
 function removeWorkbook(index) {
@@ -602,8 +605,8 @@ function renderWorkbookList() {
   }));
 }
 
-function renderSurvey(preferMap = true, rebuildSources = true) {
-  const previous = $('metric').value;
+function renderSurvey(preferMap = true, rebuildSources = true, view) {
+  const previous = view?.metric ?? $('metric').value;
   keys = [...new Set(surveys.flatMap(survey => survey.metrics.map(metric => metric.key)))];
   $('explorer').hidden = !keys.length;
   $('sources').hidden = !surveys.length;
@@ -617,7 +620,7 @@ function renderSurvey(preferMap = true, rebuildSources = true) {
     if (mappable.size && !mappable.has($('metric').value)) $('metric').value = mappable.values().next().value;
     renderModes(mappable.size ? 'map' : $('mode').value);
   } else if (keys.length) {
-    renderModes($('mode').value);
+    renderModes(view?.mode ?? $('mode').value, false, view?.group);
   } else {
     resetMap();
     active = undefined;
@@ -866,6 +869,7 @@ $('catalogs').addEventListener('change', async event => {
   input.value = '';
   input.disabled = true;
   $('clear-catalogs').disabled = true;
+  controls();
   const date = $('snapshot-date').value;
   const messages = [];
   let added = 0;
@@ -887,6 +891,7 @@ $('catalogs').addEventListener('change', async event => {
   $('catalog-status').textContent = `Read ${added} of ${files.length} files. ${snapshots.length} dated snapshots available.`;
   renderCatalogs(messages, needsDate);
   if (added && $('keep-imports').checked) await persistImports();
+  controls();
 });
 $('clear-catalogs').addEventListener('click', () => {
   snapshots = [];
@@ -958,6 +963,7 @@ $('plans').addEventListener('change', async event => {
   input.value = '';
   input.disabled = true;
   $('clear-plans').disabled = true;
+  controls();
   const tabs = files.filter(file => /\.tab$/i.test(file.name));
   const images = files.filter(file => /\.(bmp|png|jpe?g)$/i.test(file.name));
   const markers = files.filter(file => /\.mrk$/i.test(file.name));
@@ -990,6 +996,7 @@ $('plans').addEventListener('change', async event => {
     renderSurvey();
     persistIfKept();
   }
+  controls();
 });
 $('clear-plans').addEventListener('click', () => {
   plans = [];
@@ -1055,6 +1062,100 @@ $('install').addEventListener('click', async () => {
   }
 });
 window.addEventListener('appinstalled', () => { $('install').hidden = true; });
+
+const workspaceDialog = $('workspace-dialog');
+const workspaceValues = ['image-format', 'snapshot-date', 'snapshot-gap', ...siteSliders];
+const workspaceChecks = ['map-legend', 'show-sites', 'show-hover-links', 'site-pci-colors', 'site-detected-only'];
+const readControls = (ids, property) => Object.fromEntries(ids.map(id => [id, $(id)[property]]));
+function currentWorkspace() {
+  return workspaceSnapshot({ surveys, snapshots, plans }, {
+    location: $('location').value, metric: $('metric').value, mode: $('mode').value,
+    group: Math.max(0, $('workbook-group').selectedIndex), basemap: chosenBasemap, outdoorBearing,
+    theme: document.documentElement.dataset.theme,
+    values: readControls(workspaceValues, 'value'), checks: readControls(workspaceChecks, 'checked'),
+  });
+}
+
+async function restoreWorkspace({ imports, view }) {
+  clearTimeout(planSaveTimer);
+  resetMap();
+  active = undefined;
+  mapPlan = undefined;
+  ({ surveys, snapshots, plans } = imports);
+  $('location').value = view.location;
+  chosenBasemap = [...$('basemap').options].some(option => option.value === view.basemap && !option.disabled)
+    ? view.basemap : 'local';
+  outdoorBearing = normalDegrees(view.outdoorBearing);
+  themePreference = view.theme;
+  applyTheme();
+  for (const id of workspaceValues) $(id).value = view.values[id] ?? $(id).defaultValue;
+  for (const id of workspaceChecks) $(id).checked = view.checks[id] ?? $(id).defaultChecked;
+  for (const id of siteSliders) $(id).dispatchEvent(new Event('input'));
+  mapView?.setHoverLinks($('show-hover-links').checked);
+  list($('issues'), []);
+  $('issues').hidden = true;
+  renderCatalogs();
+  renderPlans();
+  renderSurvey(false, true, view);
+  $('status').textContent = `Restored ${surveys.length} workbooks. ${keys.length} KPIs available.`;
+  $('catalog-status').textContent = `Restored ${snapshots.length} dated snapshots.`;
+  $('plan-status').textContent = `Restored ${plans.length} floor ${plans.length === 1 ? 'plan' : 'plans'}.`;
+  if ($('keep-imports').checked) await persistImports();
+}
+
+function workspaceStatus(message) {
+  $('workspace-status').textContent = message;
+  $('workspace-status').hidden = !message;
+}
+
+const workspaceActions = ['workspace-save', 'workspace-download', 'workspace-restore', 'workspace-open'];
+let workspaceBusy = false;
+function workspaceAction(id, action) {
+  $(id).addEventListener('click', async () => {
+    workspaceBusy = true;
+    for (const control of [...workspaceActions, 'workspace-file', 'workspace-close']) $(control).disabled = true;
+    workspaceStatus('Working…');
+    try {
+      workspaceStatus(await action());
+    } catch (error) {
+      workspaceStatus(error.message);
+    } finally {
+      workspaceBusy = false;
+      for (const control of [...workspaceActions, 'workspace-file', 'workspace-close']) $(control).disabled = false;
+      $('workspace-open').disabled = !$('workspace-file').files.length;
+    }
+  });
+}
+$('workspace').addEventListener('click', () => {
+  $('workspace-file').value = '';
+  $('workspace-open').disabled = true;
+  workspaceStatus('');
+  workspaceDialog.showModal();
+});
+workspaceDialog.addEventListener('cancel', event => { if (workspaceBusy) event.preventDefault(); });
+$('workspace-file').addEventListener('change', () => { $('workspace-open').disabled = !$('workspace-file').files.length; });
+workspaceAction('workspace-save', async () => {
+  await saveWorkspace(currentWorkspace());
+  return 'Workspace saved in this browser.';
+});
+workspaceAction('workspace-download', () => {
+  const workspace = currentWorkspace();
+  download(new Blob([JSON.stringify(workspace)], { type: 'application/json' }),
+    `${filename(workspace.view.location || 'surveyor')}.surveyor.json`);
+  return 'Workspace download started.';
+});
+workspaceAction('workspace-restore', async () => {
+  const saved = await loadWorkspace();
+  if (!saved) throw new Error('No workspace has been saved in this browser yet.');
+  await restoreWorkspace(validateWorkspace(saved));
+  return 'Workspace restored from this browser.';
+});
+workspaceAction('workspace-open', async () => {
+  const file = $('workspace-file').files[0];
+  await restoreWorkspace(parseWorkspace(await file.text()));
+  $('workspace-file').value = '';
+  return 'Workspace restored from file.';
+});
 
 $('keep-imports').addEventListener('change', persistImports);
 async function restoreImports() {

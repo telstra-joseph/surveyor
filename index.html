@@ -23,6 +23,7 @@
         </div>
         <div class="header-actions">
           <button type="button" id="install" class="quiet" hidden>Install app</button>
+          <button type="button" id="workspace" class="quiet" aria-haspopup="dialog" disabled>Save workspace</button>
           <button type="button" id="theme-switch" class="theme-switch" role="switch" aria-label="Dark mode" aria-checked="false">
             <svg width="38" height="33.25" viewBox="0 -2 32 28" aria-hidden="true" focusable="false">
               <svg class="theme-sky" width="32" height="23" viewBox="0 0 32 23">
@@ -212,6 +213,24 @@
       </section>
       <footer>Joseph, 2026</footer>
     </main>
+    <dialog id="workspace-dialog" aria-labelledby="workspace-title">
+      <h2 id="workspace-title">Save or restore workspace</h2>
+      <p>Save your imported data and current view settings. Workspace files contain survey data; share them only with authorised recipients.</p>
+      <div class="actions">
+        <button type="button" id="workspace-save" class="primary">Save in this browser</button>
+        <button type="button" id="workspace-download">Download workspace file</button>
+      </div>
+      <h3>Restore session</h3>
+      <p>Restoring replaces the current workspace. Saving in this browser replaces the previous manual save.</p>
+      <button type="button" id="workspace-restore">Restore browser save</button>
+      <div class="workspace-file">
+        <label for="workspace-file">Workspace file</label>
+        <input type="file" id="workspace-file" accept=".surveyor.json,.json,application/json">
+        <button type="button" id="workspace-open" disabled>Restore from file</button>
+      </div>
+      <p id="workspace-status" role="status" hidden></p>
+      <form method="dialog" class="actions"><button type="submit" id="workspace-close">Close</button></form>
+    </dialog>
     <dialog id="report-dialog" aria-labelledby="report-step-title">
       <form id="report-options" novalidate>
         <header>

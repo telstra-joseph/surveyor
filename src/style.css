@@ -291,11 +291,15 @@ footer { color: var(--muted); padding-block: .75rem 2rem; }
 #map-panel:not([hidden]) + .comparison { margin-block-start: 1.75rem; }
 .checkbox-label { display: flex; align-items: center; gap: .55rem; margin: 0; min-height: 2.75rem; }
 .checkbox-label input { width: 1.15rem; min-height: 1.15rem; flex-shrink: 0; }
-#report-dialog {
+#report-dialog, #workspace-dialog {
   width: min(42rem, calc(100% - 1.5rem)); max-height: calc(100dvh - 1.5rem);
   padding: 0; border: 1px solid var(--line); border-radius: 1rem; color: var(--ink); background: var(--surface);
 }
-#report-dialog::backdrop { background: rgb(19 26 53 / .62); }
+#report-dialog::backdrop, #workspace-dialog::backdrop { background: rgb(19 26 53 / .62); }
+#workspace-dialog { padding: 1.25rem; overflow: auto; }
+#workspace-dialog h2 { margin-block-start: 0; }
+.workspace-file { margin-block-start: 1rem; }
+.workspace-file button { margin-block-start: .5rem; }
 #report-options { display: flex; flex-direction: column; max-height: calc(100dvh - 1.5rem - 2px); overflow-x: clip; }
 #report-options > :is(header, footer) { padding: .85rem clamp(.75rem, 4vw, 1.4rem); }
 #report-options footer { justify-content: flex-end; margin: 0; border-top: 1px solid var(--line); }

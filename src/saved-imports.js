@@ -25,3 +25,6 @@ async function transfer(mode, operation) {
 export const loadImports = () => transfer('readonly', store => store.get('workspace'));
 export const saveImports = imports => transfer('readwrite', store => imports
   ? store.put(imports, 'workspace') : store.delete('workspace'));
+
+export const loadWorkspace = () => transfer('readonly', store => store.get('manual-workspace'));
+export const saveWorkspace = workspace => transfer('readwrite', store => store.put(workspace, 'manual-workspace'));

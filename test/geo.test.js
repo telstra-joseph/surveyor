@@ -31,11 +31,11 @@ test('maps only geolocated call drop events with a single event legend', () => {
 test('groups and deduplicates sector bands without guessing unmapped frequencies', () => {
   const sectors = [
     { rat: 'NR', carrier: 'DA' }, { rat: 'LTE', carrier: 'H' }, { rat: 'NR', carrier: 'V' },
-    { rat: 'LTE', carrier: 'H' }, { rat: 'LTE', carrier: 'W' }, { rat: 'NR', carrier: 'X' },
+    { rat: 'LTE', carrier: 'H' }, { rat: 'LTE', carrier: 'W' }, { rat: 'NR', carrier: 'W' }, { rat: 'NR', carrier: 'X' },
   ];
   assert.deepEqual(sectorLegendGroups(sectors).map(({ rat, entries }) => [rat, entries.map(({ label }) => label)]), [
     ['LTE', ['H 850e MHz', 'W']],
-    ['NR', ['V 850 MHz', 'X 2600 MHz', 'D 26000 MHz']],
+    ['NR', ['V 850 MHz', 'W 850 MHz', 'X 2600 MHz', 'D 26000 MHz']],
   ]);
 });
 

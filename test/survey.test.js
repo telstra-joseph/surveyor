@@ -8,6 +8,33 @@ import { mapImage, stackImages } from '../src/image-export.js';
 import { parseWorkbook } from '../src/survey.js';
 import { orderWorkbookBatch } from '../src/workers.js';
 import { applySavedKpiOrder, defaultReportKpiOrder, groupReportFloors } from '../src/report-options.js';
+import { parseWorkspace, workspaceSnapshot } from '../src/workspace.js';
+
+test('portable workspaces preserve workbook order, floor assignments, snapshots and view settings', async () => {
+  const workbook = new ExcelJS.Workbook();
+  workbook.addWorksheet('Series Formatted Data').addRows([
+    ['Longitude', 'Latitude', 'LTE_UE_RSRP'], [151, -32, -100],
+  ]);
+  const buffer = await workbook.xlsx.writeBuffer();
+  const first = await parseWorkbook(buffer, 'UE2.xlsx');
+  const second = await parseWorkbook(buffer, 'UE1.xlsx');
+  const plan = {
+    id: 'plan', name: 'Floor', image: 'data:image/png;base64,AA==', width: 120, height: 60,
+    planar: true, corners: [[0, 0], [120, 0], [0, -60]], markers: [[1, -1]], bearing: 90,
+  };
+  const snapshot = { rat: 'LTE', day: '2026-11-04', filename: 'test.csv',
+    cells: [{ coords: [151, -32], site: 'A', name: 'Test', sector: '', angles: null }] };
+  const saved = workspaceSnapshot({ surveys: [{ ...first, planId: plan.id }, second], plans: [plan], snapshots: [snapshot] }, {
+    location: 'Test site', metric: 'LTE_UE_RSRP', mode: 'map', basemap: 'local', group: 1,
+    theme: 'dark', outdoorBearing: 12, values: { 'image-format': 'png' }, checks: { 'show-sites': false },
+  });
+  assert.deepEqual(parseWorkspace(JSON.stringify(saved)), saved);
+  assert.throws(() => parseWorkspace(JSON.stringify({ ...saved, version: 2 })), /version is not supported/);
+  assert.throws(() => parseWorkspace(JSON.stringify({
+    ...saved, imports: { ...saved.imports, plans: [{ ...plan, image: 'https://example.com/plan.png' }] },
+  })), /invalid floor plans/);
+  assert.throws(() => parseWorkspace('{ broken'), /not valid JSON/);
+});
 
 test('call drop sample plots and PowerPoint fallback show only detected events', async () => {
   const metric = { key: callDropKey, series: [[1, 0], [2, 1], [3, 2]], histogram: [['No drop', 1], ['Drop', 1]] };

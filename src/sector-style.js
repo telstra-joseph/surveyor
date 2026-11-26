@@ -6,7 +6,7 @@ const carrierColors = new Map(Object.entries({
 }));
 const bands = {
   LTE: new Map(Object.entries({ F: '700', H: '850e', E: '1800', K: '1800', J: '2100', A: '2600', B: '2600' })),
-  NR: new Map(Object.entries({ V: '850', Z: '2600', X: '2600', C: '3600', R: '3700', D: '26000' })),
+  NR: new Map(Object.entries({ V: '850', W: '850', Z: '2600', X: '2600', C: '3600', R: '3700', D: '26000' })),
 };
 
 export function carrierCode(site, ...labels) {
