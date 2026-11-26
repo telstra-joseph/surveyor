@@ -24,10 +24,7 @@
         <div class="header-actions">
           <button type="button" id="install" class="quiet" hidden>Install app</button>
           <button type="button" id="workspace" class="quiet" aria-label="Save workspace" aria-haspopup="dialog" disabled>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round" aria-hidden="true" focusable="false">
-              <path d="M4 3h13l4 4v13a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z"/>
-              <path d="M7 3v6h10V3m-2 0v4M7 21v-7h10v7"/>
-            </svg>
+            <svg width="18" height="18" aria-hidden="true"><use href="#save-glyph"/></svg>
             <span>Save workspace</span>
           </button>
           <button type="button" id="theme-switch" class="theme-switch" role="switch" aria-label="Dark mode" aria-checked="false">
@@ -61,7 +58,8 @@
           <label for="location">Location</label>
           <input id="location" type="text" maxlength="80" placeholder="e.g. Hunter Expressway">
           <div class="actions">
-            <button type="button" class="primary" id="report" disabled>
+            <button type="button" class="primary" id="report" aria-label="Download PowerPoint" disabled>
+              <svg width="18" height="18" aria-hidden="true"><use href="#download-glyph"/></svg>
               <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                 <g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M2.4 11.5A10.1 10.1 0 1 1 7 20.6"/>
@@ -70,7 +68,7 @@
                   <path d="M4.7 18.2v-4.4h1.2a1.25 1.25 0 0 1 0 2.5H4.7"/>
                 </g>
               </svg>
-              Download PowerPoint
+              PowerPoint
             </button>
             <button type="button" id="clear" class="danger-action" disabled>Clear survey</button>
           </div>
@@ -202,8 +200,12 @@
             <div id="survey-map" role="region" aria-label="Interactive KPI map" tabindex="0"></div>
             <div class="actions">
               <button type="button" id="fit-map" disabled>Fit to samples</button>
-              <button type="button" id="download-kml" disabled>Download KML</button>
-              <button type="button" id="download-shp" disabled>Download Shapefile (ZIP)</button>
+              <button type="button" id="download-kml" class="export-icon" aria-label="Download KML" disabled>
+                <svg width="18" height="18" aria-hidden="true"><use href="#download-glyph"/></svg> KML
+              </button>
+              <button type="button" id="download-shp" class="export-icon" aria-label="Download Shapefile (ZIP)" disabled>
+                <svg width="18" height="18" aria-hidden="true"><use href="#download-glyph"/></svg> Shapefile (ZIP)
+              </button>
             </div>
             <details id="sector-key" open hidden>
               <summary>Actix sector legend</summary>
@@ -247,13 +249,13 @@
               </div>
             </div>
             <button type="button" id="export-chart" class="export-icon" aria-label="Download plot (SVG)">
-              <svg width="18" height="18" aria-hidden="true"><use href="#image-download-glyph"/></svg><span>Plot (SVG)</span>
+              <svg width="18" height="18" aria-hidden="true"><use href="#download-glyph"/></svg><span>Plot (SVG)</span>
             </button>
             <button type="button" id="export-legend" class="export-icon" aria-label="Download legend (SVG)">
-              <svg width="18" height="18" aria-hidden="true"><use href="#image-download-glyph"/></svg><span>Legend (SVG)</span>
+              <svg width="18" height="18" aria-hidden="true"><use href="#download-glyph"/></svg><span>Legend (SVG)</span>
             </button>
             <button type="button" id="export-both" class="export-icon" aria-label="Download both (SVG)">
-              <svg width="18" height="18" aria-hidden="true"><use href="#image-download-glyph"/></svg><span>Both (SVG)</span>
+              <svg width="18" height="18" aria-hidden="true"><use href="#download-glyph"/></svg><span>Both (SVG)</span>
             </button>
           </div>
           <p id="export-status" role="status" hidden></p>
@@ -274,27 +276,45 @@
       <footer>Joseph, 2026</footer>
     </main>
     <svg width="0" height="0" class="visually-hidden" aria-hidden="true">
-      <symbol id="image-download-glyph" viewBox="0 0 24 24">
+      <symbol id="download-glyph" viewBox="0 0 24 24">
         <path d="M12 3v12m-4-4 4 4 4-4M5 16v5h14v-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </symbol>
+      <symbol id="save-glyph" viewBox="0 0 24 24">
+        <path d="M4 3h13l4 4v13a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Zm3 0v6h10V3m-2 0v4M7 21v-7h10v7" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"/>
       </symbol>
     </svg>
     <dialog id="workspace-dialog" aria-labelledby="workspace-title">
       <h2 id="workspace-title">Save or restore workspace</h2>
       <p>Save your imported data and current view settings. Workspace files contain survey data; share them only with authorised recipients.</p>
-      <div class="actions">
-        <button type="button" id="workspace-save" class="primary">Save in this browser</button>
-        <button type="button" id="workspace-download">Download workspace file</button>
+      <div class="actions workspace-save-actions">
+        <div>
+          <button type="button" id="workspace-save" class="primary export-icon">
+            <svg width="18" height="18" aria-hidden="true"><use href="#save-glyph"/></svg> Save in this browser
+          </button>
+          <p id="workspace-save-status" class="workspace-status" role="status"></p>
+        </div>
+        <div>
+          <button type="button" id="workspace-download" class="export-icon" aria-label="Download workspace file">
+            <svg width="18" height="18" aria-hidden="true"><use href="#download-glyph"/></svg> Workspace file
+          </button>
+          <p id="workspace-download-status" class="workspace-status" role="status"></p>
+        </div>
       </div>
       <h3>Restore session</h3>
       <p>Restoring replaces the current workspace. Saving in this browser replaces the previous manual save.</p>
-      <button type="button" id="workspace-restore">Restore browser save</button>
+      <button type="button" id="workspace-restore" class="export-icon">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 4v6h6M3.5 10a8.5 8.5 0 1 1 1.8 8"/>
+        </svg> Restore browser save
+      </button>
+      <p id="workspace-restore-status" class="workspace-status" role="status"></p>
       <div class="workspace-file">
         <label for="workspace-file">Workspace file</label>
         <input type="file" id="workspace-file" accept=".surveyor.json,.json,application/json">
         <button type="button" id="workspace-open" disabled>Restore from file</button>
+        <p id="workspace-open-status" class="workspace-status" role="status"></p>
       </div>
-      <p id="workspace-status" role="status" hidden></p>
-      <form method="dialog" class="actions"><button type="submit" id="workspace-close">Close</button></form>
+      <form method="dialog" class="actions"><button type="submit" id="workspace-close" class="danger-action">Close</button></form>
     </dialog>
     <dialog id="report-dialog" aria-labelledby="report-step-title">
       <form id="report-options" novalidate>
@@ -308,7 +328,9 @@
         <footer class="actions">
           <button id="report-cancel" type="button" class="danger-action">Cancel</button>
           <button id="report-back" type="button">Back</button>
-          <button id="report-next" class="primary" type="submit">Next</button>
+          <button id="report-next" class="primary export-icon" type="submit">
+            <svg width="18" height="18" aria-hidden="true" hidden><use href="#download-glyph"/></svg><span>Next</span>
+          </button>
         </footer>
       </form>
     </dialog>

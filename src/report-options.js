@@ -44,6 +44,8 @@ export function reportOptions(openButton, getSurveys, onExport) {
   const status = document.getElementById('report-order-status');
   const back = document.getElementById('report-back');
   const next = document.getElementById('report-next');
+  const nextGlyph = next.querySelector('svg');
+  const nextLabel = next.querySelector('span');
   const stepPanels = [title.parentElement, content];
   const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
   let step, surveys, selected, order, floorOrder, kpiOrder, excludedKeys, overrides, floorSections, addDividers, dividerTitles;
@@ -142,7 +144,11 @@ export function reportOptions(openButton, getSurveys, onExport) {
     error.textContent = '';
     status.textContent = '';
     back.hidden = step === 0;
-    next.textContent = step === steps.length - 1 ? 'Download PowerPoint' : 'Next';
+    const finalStep = step === steps.length - 1;
+    nextGlyph.toggleAttribute('hidden', !finalStep);
+    nextLabel.textContent = finalStep ? 'PowerPoint' : 'Next';
+    if (finalStep) next.setAttribute('aria-label', 'Download PowerPoint');
+    else next.removeAttribute('aria-label');
     if (step < 2) renderChoices();
     else if (step === 2) renderCustomisation();
     else renderOrder();

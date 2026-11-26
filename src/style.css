@@ -384,6 +384,14 @@ footer { color: var(--muted); padding-block: .75rem 2rem; }
 #report-dialog::backdrop, #workspace-dialog::backdrop { background: rgb(19 26 53 / .62); }
 #workspace-dialog { padding: 1.25rem; overflow: auto; }
 #workspace-dialog h2 { margin-block-start: 0; }
+.workspace-save-actions { align-items: start; }
+.workspace-status { margin: 0; font-style: italic; }
+.workspace-status:not(:empty) { margin-block-start: .4rem; }
+#workspace-dialog button:enabled:not(.danger-action):hover {
+  background-color: var(--cream);
+  border-color: var(--accent-ink);
+  color: var(--accent-ink);
+}
 .workspace-file { margin-block-start: 1rem; }
 .workspace-file button { margin-block-start: .5rem; }
 #report-options { display: flex; flex-direction: column; max-height: calc(100dvh - 1.5rem - 2px); overflow-x: clip; }

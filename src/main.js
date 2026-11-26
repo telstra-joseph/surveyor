@@ -1236,22 +1236,18 @@ async function restoreWorkspace({ imports, view }) {
   if ($('keep-imports').checked) await persistImports();
 }
 
-function workspaceStatus(message) {
-  $('workspace-status').textContent = message;
-  $('workspace-status').hidden = !message;
-}
-
 const workspaceActions = ['workspace-save', 'workspace-download', 'workspace-restore', 'workspace-open'];
 let workspaceBusy = false;
 function workspaceAction(id, action) {
+  const status = $(`${id}-status`);
   $(id).addEventListener('click', async () => {
     workspaceBusy = true;
     for (const control of [...workspaceActions, 'workspace-file', 'workspace-close']) $(control).disabled = true;
-    workspaceStatus('Working…');
+    status.textContent = 'Working…';
     try {
-      workspaceStatus(await action());
+      status.textContent = await action();
     } catch (error) {
-      workspaceStatus(error.message);
+      status.textContent = error.message;
     } finally {
       workspaceBusy = false;
       for (const control of [...workspaceActions, 'workspace-file', 'workspace-close']) $(control).disabled = false;
@@ -1262,11 +1258,14 @@ function workspaceAction(id, action) {
 $('workspace').addEventListener('click', () => {
   $('workspace-file').value = '';
   $('workspace-open').disabled = true;
-  workspaceStatus('');
+  for (const id of workspaceActions) $(`${id}-status`).textContent = '';
   workspaceDialog.showModal();
 });
 workspaceDialog.addEventListener('cancel', event => { if (workspaceBusy) event.preventDefault(); });
-$('workspace-file').addEventListener('change', () => { $('workspace-open').disabled = !$('workspace-file').files.length; });
+$('workspace-file').addEventListener('change', () => {
+  $('workspace-open').disabled = !$('workspace-file').files.length;
+  $('workspace-open-status').textContent = '';
+});
 workspaceAction('workspace-save', async () => {
   await saveWorkspace(currentWorkspace());
   return 'Workspace saved in this browser.';
