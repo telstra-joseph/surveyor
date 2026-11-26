@@ -145,6 +145,7 @@ export function reportOptions(openButton, getSurveys, onExport) {
     status.textContent = '';
     back.hidden = step === 0;
     const finalStep = step === steps.length - 1;
+    next.classList.toggle('powerpoint-action', finalStep);
     nextGlyph.toggleAttribute('hidden', !finalStep);
     nextLabel.textContent = finalStep ? 'PowerPoint' : 'Next';
     if (finalStep) next.setAttribute('aria-label', 'Download PowerPoint');

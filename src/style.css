@@ -194,9 +194,9 @@ button, input::file-selector-button,
 .snapshot-gap-control.is-rolling #snapshot-gap { color: transparent; caret-color: var(--ink); }
 .snapshot-gap-control.is-rolling #snapshot-gap-motion { display: block; }
 button.primary { background: var(--blue); border-color: var(--blue); color: white; }
-:is(#report, #workspace) { display: inline-flex; align-items: center; justify-content: center; gap: .4rem; }
-:is(#report, #workspace) > svg { flex: none; }
-#report:enabled:hover { background: var(--telstra-coral); border-color: var(--telstra-coral); color: var(--telstra-deep); }
+:is(.powerpoint-action, #workspace) { display: inline-flex; align-items: center; justify-content: center; gap: .4rem; }
+:is(.powerpoint-action, #workspace) > svg { flex: none; }
+.powerpoint-action:enabled:hover { background: var(--telstra-coral); border-color: var(--telstra-coral); color: var(--telstra-deep); }
 button.danger-action:enabled:not([aria-disabled="true"]):hover { background: #b42318; border-color: #b42318; color: #fff; }
 #report-status { margin: 0; font-style: italic; }
 #report-status:not(:empty) { margin-top: .4rem; }
