@@ -15,7 +15,7 @@ export function stackImages(title, ...images) {
   return imageSvg({ title, width, height: height - 12, content });
 }
 
-export function mapImage(element, title, includeTiles = false, { cropToFloorPlan = false } = {}) {
+export function mapImage(element, title, includeTiles = false, { cropToFloorPlan } = {}) {
   const viewport = element.getBoundingClientRect();
   const width = Math.round(element.clientWidth), height = Math.round(element.clientHeight);
   if (!width || !height) throw new Error('Open the map before exporting it.');
@@ -26,10 +26,10 @@ export function mapImage(element, title, includeTiles = false, { cropToFloorPlan
   };
   const overlaps = (area, { x, y, w, h }) => area.x < x + w && area.y < y + h && area.x + area.w > x && area.y + area.h > y;
   const screen = { x: 0, y: 0, w: width, h: height };
-  const planImage = cropToFloorPlan ? element.querySelector('img.survey-floor-plan') : null;
-  if (cropToFloorPlan && !planImage) throw new Error('The report floor plan is not available for capture.');
+  const planImage = cropToFloorPlan === false ? null : element.querySelector('img.survey-floor-plan');
+  if (cropToFloorPlan && !planImage) throw new Error('The floor plan is not available for capture.');
   const planBounds = planImage && bounds(planImage);
-  if (planBounds && (!planBounds.w || !planBounds.h)) throw new Error('The report floor plan has no visible bounds.');
+  if (planBounds && (!planBounds.w || !planBounds.h)) throw new Error('The floor plan has no visible bounds.');
   const withinViewport = area => overlaps(area, screen);
   const bearing = Number(element.dataset.bearing) || 0;
   // Map-aligned layers are measured with the rotating pane briefly unrotated, then drawn through its transform.
@@ -111,10 +111,17 @@ export function mapImage(element, title, includeTiles = false, { cropToFloorPlan
     const aligned = `${basemap}${plans}${sectors}${overlays}`;
     const rotated = paneMatrix ? `<g transform="matrix(${['a', 'b', 'c', 'd', 'e', 'f'].map(key => +paneMatrix[key].toFixed(6)).join(' ')})">${aligned}</g>` : aligned;
     const paper = element.classList.contains('floor-plan-basemap') ? '#FFFFFF' : '#E6ECED';
-    const cropX = planBounds ? Math.floor(planBounds.x) - 4 : 0;
-    const cropY = planBounds ? Math.floor(planBounds.y) - 4 : 0;
-    const outputWidth = planBounds ? Math.ceil(planBounds.x + planBounds.w) - cropX + 4 : width;
-    const outputHeight = planBounds ? Math.ceil(planBounds.y + planBounds.h) - cropY + 4 : height;
+    let cropX = 0, cropY = 0, outputWidth = width, outputHeight = height;
+    if (planBounds) {
+      const paddedWidth = planBounds.w + 8, paddedHeight = planBounds.h + 8;
+      const sourceWidth = planImage.naturalWidth || planImage.width;
+      const sourceHeight = planImage.naturalHeight || planImage.height;
+      const ratio = sourceWidth > 0 && sourceHeight > 0 ? sourceWidth / sourceHeight : paddedWidth / paddedHeight;
+      outputWidth = Math.max(paddedWidth, paddedHeight * ratio);
+      outputHeight = outputWidth / ratio;
+      cropX = planBounds.x + (planBounds.w - outputWidth) / 2;
+      cropY = planBounds.y + (planBounds.h - outputHeight) / 2;
+    }
     const layers = planBounds ? `<g transform="translate(${-cropX} ${-cropY})">${rotated}${upright}</g>` : `${rotated}${upright}`;
     const content = `<rect width="100%" height="100%" fill="${paper}"/>${layers}`;
     return { width: outputWidth, height: outputHeight, svg: imageSvg({ title, width: outputWidth, height: outputHeight, content }), hasBasemap: Boolean(basemap), attribution };

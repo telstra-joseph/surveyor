@@ -3,7 +3,7 @@ import { thresholdProfile, thresholdRange, validateThresholds } from './map-thre
 import { reportMetricName } from './report-labels.js';
 import { sortableList } from './sortable-list.js';
 
-const steps = ['Choose workbooks', 'Choose KPIs', 'Customise PowerPoint', 'Arrange workbook sections'];
+const steps = ['Choose workbooks', 'Choose KPIs', 'Customise PowerPoint', 'Arrange report sections'];
 const kpiOrderStorageKey = 'surveyor-report-kpi-order';
 const checkbox = (value, label, checked) => `<label class="checkbox-label">
   <input type="checkbox" value="${escapeMarkup(String(value))}" ${checked ? 'checked' : ''}>
@@ -24,6 +24,17 @@ export function applySavedKpiOrder(keys, saved) {
   return [...saved.filter(key => remaining.delete(key)), ...defaultReportKpiOrder([...remaining])];
 }
 
+export function groupReportFloors(surveys, order) {
+  const groups = new Map();
+  for (const index of order) {
+    const { planId, planName } = surveys[index];
+    const id = planId ?? null;
+    if (!groups.has(id)) groups.set(id, { id, title: planName || 'No floor plan', workbookIndexes: [] });
+    groups.get(id).workbookIndexes.push(index);
+  }
+  return groups;
+}
+
 export function reportOptions(openButton, getSurveys, onExport) {
   const dialog = document.getElementById('report-dialog');
   const form = document.getElementById('report-options');
@@ -35,7 +46,7 @@ export function reportOptions(openButton, getSurveys, onExport) {
   const next = document.getElementById('report-next');
   const stepPanels = [title.parentElement, content];
   const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
-  let step, surveys, selected, order, kpiOrder, excludedKeys, overrides, workbookSections, addDividers, dividerTitles;
+  let step, surveys, selected, order, floorOrder, kpiOrder, excludedKeys, overrides, floorSections, addDividers, dividerTitles;
   let animations, savedKpiOrder, kpiStorageError;
 
   const metrics = () => order.flatMap(i => surveys[i].metrics);
@@ -46,17 +57,22 @@ export function reportOptions(openButton, getSurveys, onExport) {
   const editableKeys = () => [...new Set(metrics().filter(metric =>
     !excludedKeys.has(metric.key) && metric.geoCount && thresholdProfile(metric.key)).map(metric => metric.key))];
   const workbookName = i => `S${i + 1} · ${surveys[i].filename}`;
+  const floors = () => {
+    const groups = groupReportFloors(surveys, order);
+    const ids = [...new Set([...floorOrder, ...groups.keys()])];
+    return ids.filter(id => groups.has(id)).map(id => groups.get(id));
+  };
 
   function renderCustomisation() {
-    content.innerHTML = `<h4>Workbook divider slides</h4>
+    content.innerHTML = `<h4>Section divider slides</h4>
       <label class="checkbox-label"><input type="checkbox" id="report-add-dividers" ${addDividers ? 'checked' : ''}
         aria-controls="report-divider-titles" aria-describedby="report-divider-hint">
-        Add a divider slide before each workbook</label>
-      <p id="report-divider-hint">Divider slides use the one-section-per-workbook layout.</p>
-      <div id="report-divider-titles" ${addDividers ? '' : 'hidden'}>${order.map(id => `<label>
-        Divider title for ${escapeMarkup(workbookName(id))}
-        <input type="text" maxlength="120" data-divider-title="${id}"
-          value="${escapeMarkup(dividerTitles.get(id) ?? surveys[id].filename)}">
+        Add a divider slide before each section</label>
+      <p id="report-divider-hint">Divider slides use the one-section-per-floor-plan layout.</p>
+      <div id="report-divider-titles" ${addDividers ? '' : 'hidden'}>${floors().map(({ id, title }, index) => `<label>
+        Divider title for ${escapeMarkup(title)}
+        <input type="text" maxlength="120" data-divider-title="${index}"
+          value="${escapeMarkup(dividerTitles.get(id) ?? title)}">
       </label>`).join('')}</div>
       <h4>Map thresholds</h4>`;
     const keys = editableKeys();
@@ -83,15 +99,19 @@ export function reportOptions(openButton, getSurveys, onExport) {
   }
 
   function renderOrder() {
+    const items = floorSections ? floors().map(({ title, workbookIndexes }) => ({
+      name: title, description: `${workbookIndexes.length} ${workbookIndexes.length === 1 ? 'workbook' : 'workbooks'}`,
+    })) : order.map(id => ({ name: workbookName(id) }));
     content.innerHTML = `<label>PowerPoint layout
       <select id="report-layout">
-        <option value="sections"${workbookSections ? ' selected' : ''}>One section per workbook</option>
-        <option value="comparison"${workbookSections ? '' : ' selected'}${addDividers ? ' disabled' : ''}>Compare workbooks by KPI</option>
+        <option value="sections"${floorSections ? ' selected' : ''}>One section per floor plan</option>
+        <option value="comparison"${floorSections ? '' : ' selected'}${addDividers ? ' disabled' : ''}>Compare workbooks by KPI</option>
       </select></label>
       ${addDividers ? '<p>To compare workbooks by KPI, go back and turn off divider slides.</p>' : ''}
-      <p>${workbookSections ? 'Move workbooks up or down to set their slide order.' : 'Move workbooks up or down to set their order within the comparisons.'}</p>
-      <ol class="report-order">${order.map((id, i) => `<li tabindex="-1" data-workbook="${id}">
-        <span>${escapeMarkup(workbookName(id))}</span>${moveButtons(`S${id + 1}`, i, order.length)}
+      <p>${floorSections ? 'Move floor plan sections up or down. Workbooks without an assigned plan share a section.'
+        : 'Move workbooks up or down to set their order within the comparisons.'}</p>
+      <ol class="report-order">${items.map(({ name, description }, i) => `<li tabindex="-1">
+        <span>${escapeMarkup(name)}${description ? ` · ${description}` : ''}</span>${moveButtons(name, i, items.length)}
       </li>`).join('')}</ol>`;
   }
 
@@ -215,7 +235,8 @@ export function reportOptions(openButton, getSurveys, onExport) {
     selected = new Set(order);
     excludedKeys = new Set();
     overrides = new Map();
-    workbookSections = true;
+    floorSections = true;
+    floorOrder = [];
     addDividers = false;
     dividerTitles = new Map();
     step = 0;
@@ -244,16 +265,16 @@ export function reportOptions(openButton, getSurveys, onExport) {
     error.textContent = '';
     if (target.id === 'report-add-dividers') {
       addDividers = target.checked;
-      if (addDividers) workbookSections = true;
+      if (addDividers) floorSections = true;
       content.querySelector('#report-divider-titles').hidden = !addDividers;
       return;
     }
     if (target.matches('[data-divider-title]')) {
-      dividerTitles.set(Number(target.dataset.dividerTitle), target.value);
+      dividerTitles.set(floors()[Number(target.dataset.dividerTitle)].id, target.value);
       return;
     }
     if (target.id === 'report-layout') {
-      workbookSections = target.value === 'sections';
+      floorSections = target.value === 'sections';
       renderOrder();
       content.querySelector('#report-layout').focus();
     }
@@ -302,8 +323,16 @@ export function reportOptions(openButton, getSurveys, onExport) {
       const i = [...list.children].indexOf(target.closest('li'));
       const position = i + Number(target.dataset.move);
       const count = list.children.length;
-      const name = `S${order[i] + 1}`;
-      [order[i], order[position]] = [order[position], order[i]];
+      let name;
+      if (floorSections) {
+        const groups = floors();
+        name = groups[i].title;
+        floorOrder = groups.map(({ id }) => id);
+        [floorOrder[i], floorOrder[position]] = [floorOrder[position], floorOrder[i]];
+      } else {
+        name = workbookName(order[i]);
+        [order[i], order[position]] = [order[position], order[i]];
+      }
       renderOrder();
       const row = content.querySelector('.report-order').children[position];
       (row.querySelector(`[data-move="${target.dataset.move}"]:enabled`) || row).focus();
@@ -318,8 +347,11 @@ export function reportOptions(openButton, getSurveys, onExport) {
     } else {
       dialog.close();
       onExport({ surveys: order.map(i => ({ ...surveys[i], sourceIndex: i })), keys: availableKeys().filter(key => !excludedKeys.has(key)),
-        dividerTitles: addDividers ? order.map(id => dividerTitles.get(id)?.trim() || surveys[id].filename) : undefined,
-        workbookSections, thresholdOverrides: Object.fromEntries(editableKeys().filter(key => overrides.has(key)).map(key => [key, overrides.get(key)])) });
+        sections: floorSections ? floors().map(({ id, title, workbookIndexes }) => ({
+          title, workbookIndexes: workbookIndexes.map(i => order.indexOf(i)),
+          dividerTitle: addDividers ? dividerTitles.get(id)?.trim() || title : undefined,
+        })) : undefined,
+        thresholdOverrides: Object.fromEntries(editableKeys().filter(key => overrides.has(key)).map(key => [key, overrides.get(key)])) });
     }
   });
 }

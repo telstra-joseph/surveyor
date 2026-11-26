@@ -990,7 +990,8 @@ $('clear-plans').addEventListener('click', () => {
   $('plans').focus();
 });
 
-reportOptions($('report'), viewSurveys, async ({ surveys: selectedSurveys, keys, workbookSections, thresholdOverrides, dividerTitles }) => {
+const reportSurveys = () => viewSurveys().map(survey => ({ ...survey, planName: planFor(survey)?.name }));
+reportOptions($('report'), reportSurveys, async ({ surveys: selectedSurveys, keys, sections, thresholdOverrides }) => {
   const location = $('location').value.trim() || 'Network survey';
   reporting = true;
   controls();
@@ -1002,14 +1003,14 @@ reportOptions($('report'), viewSurveys, async ({ surveys: selectedSurveys, keys,
     }
     const maps = await captureReportMaps({
       surveys: selectedSurveys, plans, bearing: outdoorBearing, keys, snapshots: catalog, maxDays: gap.valueAsNumber, basemap: chosenBasemap,
-      workbookSections, thresholdOverrides,
+      sections, thresholdOverrides,
       showSites: $('show-sites').checked, siteStyle: siteStyle(), matchPci: $('site-pci-colors').checked,
       thresholds: $('map-legend').checked, request: gisRequest,
       progress: (done, total, title) => { $('status').textContent = `Capturing map ${done} of ${total}: ${title}…`; },
     });
     $('status').textContent = 'Assembling PowerPoint…';
     const { buffer } = await workerRequest(new Worker(new URL('./report.worker.js', import.meta.url), { type: 'module' }),
-      { location, maps, workbookSections, dividerTitles, surveys: selectedSurveys.map(({ filename, profile, days, metrics, sourceIndex }) => ({
+      { location, maps, sections, surveys: selectedSurveys.map(({ filename, profile, days, metrics, sourceIndex }) => ({
         filename, profile, days, sourceIndex, metrics: metrics.filter(metric => keys.includes(metric.key))
           .map(({ key, series, histogram, statistics }) => ({ key, series, histogram, statistics })),
       })), keys });

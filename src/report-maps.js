@@ -4,7 +4,7 @@ import { mapLegendExportEntry, mapLegendFilter, mapPointLegend } from './map-col
 import { supportsMapThresholds } from './map-thresholds.js';
 import { createMapView } from './map-view.js';
 import { mapSectors } from './sector-style.js';
-import { mapWorkbook } from './geo.js';
+import { mapWorkbook, radioFields } from './geo.js';
 import { reportMetricName } from './report-labels.js';
 
 const dataUrl = blob => new Promise((resolve, reject) => {
@@ -15,10 +15,11 @@ const dataUrl = blob => new Promise((resolve, reject) => {
 });
 
 export async function captureReportMaps({ surveys, plans = [], bearing = 0, keys, snapshots, maxDays, basemap,
-  showSites, siteStyle, matchPci, thresholds, workbookSections, thresholdOverrides = {}, request, progress }) {
-  const jobsFor = (workbooks, workbookIndex) => keys.flatMap(key => groupDatasets(datasets(workbooks, key, 'map'))
-    .map(items => ({ key, items, workbooks, workbookIndex })));
-  const jobs = workbookSections ? surveys.flatMap((survey, index) => jobsFor([survey], index)) : jobsFor(surveys);
+  showSites, siteStyle, matchPci, thresholds, sections, thresholdOverrides = {}, request, progress }) {
+  const jobsFor = (workbooks, sectionIndex) => keys.flatMap(key => groupDatasets(datasets(workbooks, key, 'map'))
+    .map(items => ({ key, items, workbooks, sectionIndex })));
+  const jobs = sections ? sections.flatMap(({ workbookIndexes }, index) =>
+    jobsFor(workbookIndexes.map(i => surveys[i]), index)) : jobsFor(surveys);
   if (!jobs.length) return [];
   const element = document.createElement('div');
   element.className = 'report-map-capture';
@@ -28,7 +29,7 @@ export async function captureReportMaps({ surveys, plans = [], bearing = 0, keys
   let view;
   const maps = [];
   try {
-    for (const [index, { key, items, workbooks, workbookIndex }] of jobs.entries()) {
+    for (const [index, { key, items, workbooks, sectionIndex }] of jobs.entries()) {
       const title = reportMetricName(key);
       progress(index + 1, jobs.length, title);
       const plan = plans.find(item => item.id === items[0].plan);
@@ -44,8 +45,10 @@ export async function captureReportMaps({ surveys, plans = [], bearing = 0, keys
       if (plan && !plan.orientationConfirmed && !plan.bearing) view.alignToFloorPlan();
       const mapBasemap = plan ? 'local' : basemap;
       view.setBasemap(mapBasemap);
+      // Georeferenced indoor PCI maps need Actix matches for the legend, even though site overlays stay hidden.
+      const catalog = !plan ? snapshots : planar ? [] : snapshots.filter(({ rat }) => radioFields[rat][1] === key);
       const { map } = await request({
-        type: 'map', key, snapshots: plan ? [] : snapshots, maxDays,
+        type: 'map', key, snapshots: catalog, maxDays,
         legendMode: workbooks.length > 1 && supportsMapThresholds(key) ? (thresholds ? 'thresholds' : 'ue') : 'auto',
         thresholdOverride: Object.hasOwn(thresholdOverrides, key) ? thresholdOverrides[key] : undefined,
         workbooks: items.map(({ index, tag, color }) => mapWorkbook(workbooks[index], key, tag, color)),
@@ -62,7 +65,7 @@ export async function captureReportMaps({ surveys, plans = [], bearing = 0, keys
         legend.entries = mapLegendFilter(map, legend.entries).entries.map(entry => mapLegendExportEntry(entry, true));
       }
       maps.push({
-        key, workbookIndex, group: items[0].group, plan: plan?.name, width: capture.width, height: capture.height,
+        key, sectionIndex, group: items[0].group, plan: plan?.name, width: capture.width, height: capture.height,
         image: await dataUrl(await svgImage(capture.svg, 'png')),
         legend,
         attribution: capture.attribution, missingBasemap: mapBasemap !== 'local' && !capture.hasBasemap,

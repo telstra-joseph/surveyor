@@ -14,7 +14,7 @@ function surveyDateLabel(surveys) {
   return days.length === 1 ? dateFormat.format(first) : dateFormat.formatRange(first, new Date(days.at(-1)));
 }
 
-export async function makeReport({ location, surveys, keys, maps = [], workbookSections = false, dividerTitles }) {
+export async function makeReport({ location, surveys, keys, maps = [], sections }) {
   const deck = new PptxGenJS();
   deck.layout = 'LAYOUT_WIDE';
   deck.title = `${location} Network Survey`;
@@ -26,7 +26,7 @@ export async function makeReport({ location, surveys, keys, maps = [], workbookS
   const shape = (slide, type, color, options) => slide.addShape(deck.ShapeType[type], {
     fill: { color: hex(color) }, line: { transparency: 100 }, ...options,
   });
-  let sectionTitle = workbookSections ? 'Cover' : undefined;
+  let sectionTitle = sections ? 'Cover' : undefined;
   if (sectionTitle) deck.addSection({ title: sectionTitle });
   const cover = deck.addSlide({ sectionTitle });
   cover.background = { color: hex(theme.cream) };
@@ -164,21 +164,21 @@ export async function makeReport({ location, surveys, keys, maps = [], workbookS
     const chartsByGroup = new Map(chartGroups.map(items => [items[0].group, items]));
     const groups = [...new Set([...byGroup.keys(), ...chartsByGroup.keys()])].sort((a, b) => a - b);
     groups.forEach((group, index) => {
-      const label = sectionLabel || (groups.length > 1 ? ` | Workbook group ${index + 1} of ${groups.length}` : '');
+      const label = sectionLabel + (groups.length > 1 ? ` | Workbook group ${index + 1} of ${groups.length}` : '');
       const groupMaps = byGroup.get(group);
-      if (groupMaps) for (const map of groupMaps) addMapPage(title, map, map.plan ? `${label} | Floor plan: ${map.plan}` : label);
+      if (groupMaps) for (const map of groupMaps) addMapPage(title, map, map.plan && !sectionLabel ? `${label} | Floor plan: ${map.plan}` : label);
       else addGroupPages(title, chartMode, chartsByGroup.get(group), label);
     });
   };
-  if (workbookSections) {
-    for (const [index, survey] of surveys.entries()) {
-      const title = `${index + 1}. ${survey.filename}`;
-      sectionTitle = title;
-      deck.addSection({ title });
-      if (dividerTitles) addDivider(dividerTitles[index]);
+  if (sections) {
+    for (const [index, { title, workbookIndexes, dividerTitle }] of sections.entries()) {
+      sectionTitle = `${index + 1}. ${title}`;
+      deck.addSection({ title: sectionTitle });
+      if (dividerTitle) addDivider(dividerTitle);
+      const workbooks = workbookIndexes.map(i => surveys[i]);
       const before = slideNumber;
       for (const key of keys) {
-        addKpiPages(key, [survey], maps.filter(map => map.key === key && map.workbookIndex === index), ` | ${title}`);
+        addKpiPages(key, workbooks, maps.filter(map => map.key === key && map.sectionIndex === index), ` | ${title}`);
       }
       if (slideNumber === before) addPage(title, 'No data for the selected KPIs');
     }

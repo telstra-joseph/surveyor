@@ -7,7 +7,17 @@ import { makeReport } from '../src/report.js';
 import { mapImage, stackImages } from '../src/image-export.js';
 import { parseWorkbook } from '../src/survey.js';
 import { orderWorkbookBatch } from '../src/workers.js';
-import { applySavedKpiOrder, defaultReportKpiOrder } from '../src/report-options.js';
+import { applySavedKpiOrder, defaultReportKpiOrder, groupReportFloors } from '../src/report-options.js';
+
+test('groups selected workbooks by plan ID, including a section for unassigned logs', () => {
+  const surveys = [{ planId: 'A', planName: 'Level' }, {}, { planId: 'B', planName: 'Level' },
+    { planId: 'A', planName: 'Level' }, { planId: 'C', planName: 'Excluded' }];
+  assert.deepEqual([...groupReportFloors(surveys, [2, 0, 1, 3]).values()], [
+    { id: 'B', title: 'Level', workbookIndexes: [2] },
+    { id: 'A', title: 'Level', workbookIndexes: [0, 3] },
+    { id: null, title: 'No floor plan', workbookIndexes: [1] },
+  ]);
+});
 
 test('restores saved KPI positions and adds newly available KPIs in their default order', () => {
   assert.deepEqual(applySavedKpiOrder(
@@ -60,8 +70,10 @@ test('map image exports scaled Actix symbols and faded labels without fading sur
   const { svg } = mapImage({
     clientWidth: 100, clientHeight: 100, clientLeft: 0, clientTop: 0, dataset: {}, classList: { contains: () => false },
     getBoundingClientRect: () => ({ left: 0, top: 0 }),
+    querySelector: () => null,
     querySelectorAll: selector => layers[selector] || [],
   }, 'Test map');
+  assert.match(svg, /viewBox="0 0 100 100"/);
   assert.match(svg, /translate\(20 30\)" opacity="0.4"><svg viewBox="0 0 11 11" width="22" height="22"/);
   assert.match(svg, /<g opacity="0.4"><rect x="45".*TEST<\/text><\/g>/);
   assert.doesNotMatch(svg, /BLOCKED/);
@@ -69,11 +81,14 @@ test('map image exports scaled Actix symbols and faded labels without fading sur
   const cropped = mapImage({
     clientWidth: 100, clientHeight: 100, clientLeft: 0, clientTop: 0, dataset: {}, classList: { contains: () => true },
     getBoundingClientRect: () => ({ left: 0, top: 0 }),
-    querySelector: () => ({ getBoundingClientRect: () => ({ left: 21.5, top: 12.75, width: 30.25, height: 56.5 }) }),
+    querySelector: () => ({
+      naturalWidth: 200, naturalHeight: 100,
+      getBoundingClientRect: () => ({ left: 21.5, top: 12.75, width: 30.25, height: 56.5 }),
+    }),
     querySelectorAll: selector => layers[selector] || [],
-  }, 'Indoor map', false, { cropToFloorPlan: true });
-  assert.deepEqual([cropped.width, cropped.height], [39, 66]);
-  assert.match(cropped.svg, /<g transform="translate\(-17 -8\)".*data:image\/png;base64,points/);
+  }, 'Indoor map');
+  assert.deepEqual([cropped.width, cropped.height], [129, 64.5]);
+  assert.match(cropped.svg, /<g transform="translate\(27\.875 -8\.75\)".*data:image\/png;base64,points/);
 });
 
 test('PowerPoint prefers a map without a sector legend and retains a chart for a KPI without GPS', async () => {
@@ -106,42 +121,45 @@ test('PowerPoint prefers a map without a sector legend and retains a chart for a
   assert.doesNotMatch(chartSlide, /<p:pic>/);
 });
 
-test('PowerPoint groups the selected KPIs into real workbook sections in the requested order', async () => {
-  const surveys = ['second & co.xlsx', 'first.xlsx'].map((filename, i) => ({
-    filename, profile: `Device ${i}`, sourceIndex: 1 - i, days: [`2026-10-1${i + 3}`], metrics: [
+test('PowerPoint combines workbooks on each floor in the requested section order', async () => {
+  const surveys = ['second & co.xlsx', 'first.xlsx', 'third.xlsx'].map((filename, i) => ({
+    filename, profile: `Device ${i}`, sourceIndex: i, days: [`2026-10-1${i + 3}`], metrics: [
       { key: 'LTE_UE_SINR', series: [[0, i]] },
       { key: 'LTE_UE_RSRP', series: [[0, i - 100]] },
     ],
   }));
   const zip = await JSZip.loadAsync(await makeReport({
-    location: 'Test site', keys: ['LTE_UE_SINR'], surveys, workbookSections: true,
+    location: 'Test site', keys: ['LTE_UE_SINR'], surveys,
+    sections: [{ title: 'Upper & east', workbookIndexes: [1] }, { title: 'Lower', workbookIndexes: [0, 2] }],
   }));
   const read = name => zip.file(`ppt/${name}.xml`).async('string');
   const deck = await read('presentation');
   assert.deepEqual([...deck.matchAll(/<p14:section name="([^"]+)"[^>]*><p14:sldIdLst><p14:sldId id="(\d+)"\/><\/p14:sldIdLst>/g)]
-    .map(match => match.slice(1)), [['Cover', '256'], ['1. second &amp; co.xlsx', '257'], ['2. first.xlsx', '258']]);
-  assert.match(await read('slides/slide2'), /SINR.*second &amp; co\.xlsx/s);
-  assert.match(await read('slides/slide3'), /SINR.*first\.xlsx/s);
+    .map(match => match.slice(1)), [['Cover', '256'], ['1. Upper &amp; east', '257'], ['2. Lower', '258']]);
+  assert.match(await read('slides/slide2'), /SINR.*Upper &amp; east/s);
+  assert.match(await read('slides/slide3'), /SINR.*Lower/s);
   assert.match(await read('slides/slide2'), /<a:t>S2<\/a:t>/);
   assert.match(await read('slides/slide3'), /<a:t>S1<\/a:t>/);
+  assert.match(await read('slides/slide3'), /<a:t>S3<\/a:t>/);
   assert.equal(zip.file('ppt/slides/slide4.xml'), null);
 });
 
-test('PowerPoint inserts each custom divider before its workbook slides and inside its section', async () => {
+test('PowerPoint inserts custom floor dividers before their KPI slides and inside each section', async () => {
   const key = 'LTE_UE_SINR';
   const zip = await JSZip.loadAsync(await makeReport({
-    location: 'Test site', keys: [key], workbookSections: true,
+    location: 'Test site', keys: [key],
     surveys: ['second.xlsx', 'first.xlsx'].map(filename => ({ filename, metrics: [{ key, series: [[0, 1]] }] })),
-    dividerTitles: ['Lobby & entrance', 'Upper floor'],
+    sections: [{ title: 'Level 1', workbookIndexes: [0], dividerTitle: 'Lobby & entrance' },
+      { title: 'Level 2', workbookIndexes: [1], dividerTitle: 'Upper floor' }],
   }));
   const slide = n => zip.file(`ppt/slides/slide${n}.xml`).async('string');
   assert.match(await slide(2), /<a:t>Lobby &amp; entrance<\/a:t>/);
-  assert.match(await slide(3), /SINR.*second\.xlsx.*Page 3/s);
+  assert.match(await slide(3), /SINR.*Level 1.*Page 3/s);
   assert.match(await slide(4), /<a:t>Upper floor<\/a:t>/);
-  assert.match(await slide(5), /SINR.*first\.xlsx.*Page 5/s);
+  assert.match(await slide(5), /SINR.*Level 2.*Page 5/s);
   const deck = await zip.file('ppt/presentation.xml').async('string');
-  assert.match(deck, /name="1\. second\.xlsx"[^>]*><p14:sldIdLst><p14:sldId id="257"\/><p14:sldId id="258"\/>/);
-  assert.match(deck, /name="2\. first\.xlsx"[^>]*><p14:sldIdLst><p14:sldId id="259"\/><p14:sldId id="260"\/>/);
+  assert.match(deck, /name="1\. Level 1"[^>]*><p14:sldIdLst><p14:sldId id="257"\/><p14:sldId id="258"\/>/);
+  assert.match(deck, /name="2\. Level 2"[^>]*><p14:sldIdLst><p14:sldId id="259"\/><p14:sldId id="260"\/>/);
   assert.equal(zip.file('ppt/slides/slide6.xml'), null);
 });
 
