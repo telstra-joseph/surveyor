@@ -422,6 +422,8 @@ footer { color: var(--muted); padding-block: .75rem 2rem; }
 .export-icon { display: inline-flex; align-items: center; justify-content: center; gap: .35rem; }
 #copy-plot { min-width: 2.75rem; padding-inline: 0; }
 @media (max-width: 38rem) {
+  #workspace { inline-size: var(--button-size); padding-inline: 0; }
+  #workspace > span { display: none; }
   #source-list li { flex-wrap: wrap; }
   #source-list li > span { flex-basis: calc(100% - var(--button-size) - .5rem); min-width: 0; }
   .source, .filters { grid-template-columns: minmax(0, 1fr); }

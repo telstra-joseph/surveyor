@@ -636,6 +636,7 @@ function renderWorkbookList() {
 function renderSurvey(preferMap = true, rebuildSources = true, view) {
   const previous = view?.metric ?? $('metric').value;
   keys = [...new Set(surveys.flatMap(survey => survey.metrics.map(metric => metric.key)))];
+  $('results').hidden = !surveys.length;
   $('explorer').hidden = !keys.length;
   $('sources').hidden = !surveys.length;
   if (rebuildSources) renderWorkbookList();
