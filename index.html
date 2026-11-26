@@ -64,7 +64,11 @@
         <div class="source-feedback">
           <p id="status" role="status"><i>No workbooks imported.</i></p>
           <ul id="issues" hidden></ul>
-          <details id="sources" open hidden><summary>Imported workbooks</summary><ul id="source-list"></ul></details>
+          <details id="sources" open hidden>
+            <summary>Imported workbooks</summary>
+            <p id="workbook-order-hint" hidden>Drag the handles to reorder workbooks, or focus a handle and use the Up and Down arrow keys.</p>
+            <ul id="source-list" class="sortable-list"></ul>
+          </details>
           <details class="actix-imports" open>
             <summary>Actix serving-cell snapshots</summary>
             <div class="filters">
@@ -123,7 +127,7 @@
               </div>
             </fieldset>
             <fieldset class="map-settings" id="plan-controls" hidden>
-              <legend id="plan-controls-title">Floor plan</legend>
+              <legend id="plan-controls-title">Floor plan: <strong id="plan-controls-name"></strong></legend>
               <div class="filters map-sliders">
                 <div><label for="plan-transparency">Floor plan transparency</label> <span id="plan-transparency-value" aria-hidden="true">0%</span>
                   <input type="range" id="plan-transparency" min="0" max="90" step="5" value="0" aria-valuetext="0%"></div>
@@ -166,7 +170,7 @@
             <aside aria-labelledby="legend-title">
               <h4 id="legend-title">Legend</h4>
               <label id="map-legend-field" class="checkbox-label" hidden>
-                <input type="checkbox" id="map-legend" aria-controls="legend"> Use KPI thresholds
+                <input type="checkbox" id="map-legend" aria-controls="legend" checked> Use KPI thresholds
               </label>
               <div id="legend-filter" hidden>
                 <p id="legend-filter-help">Select or double-click a legend entry to isolate its points.</p>

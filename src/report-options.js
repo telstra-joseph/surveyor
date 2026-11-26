@@ -1,8 +1,10 @@
 import { escapeMarkup } from './charts.js';
 import { thresholdProfile, thresholdRange, validateThresholds } from './map-thresholds.js';
 import { reportMetricName } from './report-labels.js';
+import { sortableList } from './sortable-list.js';
 
 const steps = ['Choose workbooks', 'Choose KPIs', 'Customise PowerPoint', 'Arrange workbook sections'];
+const kpiOrderStorageKey = 'surveyor-report-kpi-order';
 const checkbox = (value, label, checked) => `<label class="checkbox-label">
   <input type="checkbox" value="${escapeMarkup(String(value))}" ${checked ? 'checked' : ''}>
   ${escapeMarkup(label)}</label>`;
@@ -17,6 +19,11 @@ export function defaultReportKpiOrder(keys) {
   return firstNr < 0 ? keys : [...keys.slice(0, firstNr), ...keys.slice(firstNr).filter(isNr), ...keys.slice(firstNr).filter(key => !isNr(key))];
 }
 
+export function applySavedKpiOrder(keys, saved) {
+  const remaining = new Set(keys);
+  return [...saved.filter(key => remaining.delete(key)), ...defaultReportKpiOrder([...remaining])];
+}
+
 export function reportOptions(openButton, getSurveys, onExport) {
   const dialog = document.getElementById('report-dialog');
   const form = document.getElementById('report-options');
@@ -29,7 +36,7 @@ export function reportOptions(openButton, getSurveys, onExport) {
   const stepPanels = [title.parentElement, content];
   const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
   let step, surveys, selected, order, kpiOrder, excludedKeys, overrides, workbookSections, addDividers, dividerTitles;
-  let animations;
+  let animations, savedKpiOrder, kpiStorageError;
 
   const metrics = () => order.flatMap(i => surveys[i].metrics);
   const availableKeys = () => {
@@ -96,11 +103,24 @@ export function reportOptions(openButton, getSurveys, onExport) {
     </div>${step === 0
       ? `<div class="report-choices" role="group" aria-label="Workbooks">${surveys.map((_, i) =>
         checkbox(i, workbookName(i), selected.has(i))).join('')}</div>`
-      : `<p>Move KPIs up or down to set their order in the PowerPoint.</p>
-        <ol class="report-order report-kpi-order" aria-label="KPIs">${keys.map((key, i) => `<li tabindex="-1">
-          ${checkbox(key, reportMetricName(key), !excludedKeys.has(key))}${moveButtons(reportMetricName(key), i, keys.length)}
+      : `<p id="report-kpi-reorder-hint">Drag the handles to reorder slides, or focus a handle and use the Up and Down arrow keys.</p>
+        <button type="button" data-save-kpi-order>Save order as default</button>
+        <ol class="report-order report-kpi-order sortable-list" aria-label="KPIs">${keys.map(key => `<li>
+          <button type="button" data-sort-handle aria-label="Reorder ${escapeMarkup(reportMetricName(key))}"
+            aria-describedby="report-kpi-reorder-hint"><span aria-hidden="true">&#8942;&#8942;</span></button>
+          ${checkbox(key, reportMetricName(key), !excludedKeys.has(key))}
         </li>`).join('')}</ol>`}`;
+    if (step === 1 && kpiStorageError) error.textContent = kpiStorageError;
   }
+
+  const kpiKey = row => row.querySelector('input').value;
+  const kpiSort = sortableList(content, (row, rows) => {
+    const keys = new Set(rows.map(kpiKey));
+    const ordered = rows.map(kpiKey).values();
+    kpiOrder = kpiOrder.map(key => keys.has(key) ? ordered.next().value : key);
+    content.querySelector('[data-save-kpi-order]').textContent = 'Save order as default';
+    status.textContent = `${reportMetricName(kpiKey(row))} moved to position ${rows.indexOf(row) + 1} of ${rows.length}.`;
+  }, { blocked: () => Boolean(animations) });
 
   function render() {
     title.textContent = steps[step];
@@ -182,7 +202,16 @@ export function reportOptions(openButton, getSurveys, onExport) {
     stopTransition();
     surveys = getSurveys();
     order = surveys.map((_, i) => i);
-    kpiOrder = defaultReportKpiOrder([...new Set(metrics().map(metric => metric.key))]);
+    savedKpiOrder = [];
+    kpiStorageError = '';
+    try {
+      const stored = JSON.parse(localStorage.getItem(kpiOrderStorageKey) ?? '[]');
+      if (!Array.isArray(stored) || !stored.every(key => typeof key === 'string')) throw new Error('Invalid saved order.');
+      savedKpiOrder = stored;
+    } catch (cause) {
+      kpiStorageError = `Could not load the default KPI order: ${cause.message}`;
+    }
+    kpiOrder = applySavedKpiOrder([...new Set(metrics().map(metric => metric.key))], savedKpiOrder);
     selected = new Set(order);
     excludedKeys = new Set();
     overrides = new Map();
@@ -194,9 +223,20 @@ export function reportOptions(openButton, getSurveys, onExport) {
     render();
   });
   document.getElementById('report-cancel').addEventListener('click', () => dialog.close());
-  dialog.addEventListener('close', () => { if (!dialog.open) stopTransition(); });
+  dialog.addEventListener('cancel', event => {
+    if (kpiSort.active()) {
+      event.preventDefault();
+      kpiSort.cancel();
+    }
+  });
+  dialog.addEventListener('close', () => {
+    if (!dialog.open) {
+      kpiSort.cancel();
+      stopTransition();
+    }
+  });
   back.addEventListener('click', () => {
-    if (animations) return;
+    if (animations || kpiSort.active()) return;
     captureStep(false);
     void changeStep(-1);
   });
@@ -236,6 +276,17 @@ export function reportOptions(openButton, getSurveys, onExport) {
     if (target.matches('[data-select]')) {
       for (const box of content.querySelectorAll('input')) box.checked = target.dataset.select === 'all';
       error.textContent = '';
+    } else if (target.matches('[data-save-kpi-order]')) {
+      const saved = [...new Set([...availableKeys(), ...savedKpiOrder])];
+      try {
+        localStorage.setItem(kpiOrderStorageKey, JSON.stringify(saved));
+        savedKpiOrder = saved;
+        error.textContent = kpiStorageError = '';
+        status.textContent = 'Default KPI order saved.';
+        target.textContent = 'Default order saved';
+      } catch (cause) {
+        error.textContent = `Could not save the default KPI order: ${cause.message}`;
+      }
     } else if (target.matches('[data-reset]')) {
       const { threshold } = target.closest('details').dataset;
       const open = [...content.querySelectorAll('details[open]')].map(item => item.dataset.threshold);
@@ -251,19 +302,9 @@ export function reportOptions(openButton, getSurveys, onExport) {
       const i = [...list.children].indexOf(target.closest('li'));
       const position = i + Number(target.dataset.move);
       const count = list.children.length;
-      let name;
-      if (step === 1) {
-        captureStep(false);
-        const keys = availableKeys();
-        const from = kpiOrder.indexOf(keys[i]), to = kpiOrder.indexOf(keys[position]);
-        [kpiOrder[from], kpiOrder[to]] = [kpiOrder[to], kpiOrder[from]];
-        name = reportMetricName(keys[i]);
-        renderChoices();
-      } else {
-        name = `S${order[i] + 1}`;
-        [order[i], order[position]] = [order[position], order[i]];
-        renderOrder();
-      }
+      const name = `S${order[i] + 1}`;
+      [order[i], order[position]] = [order[position], order[i]];
+      renderOrder();
       const row = content.querySelector('.report-order').children[position];
       (row.querySelector(`[data-move="${target.dataset.move}"]:enabled`) || row).focus();
       status.textContent = `${name} moved to position ${position + 1} of ${count}.`;
@@ -271,7 +312,7 @@ export function reportOptions(openButton, getSurveys, onExport) {
   });
   form.addEventListener('submit', event => {
     event.preventDefault();
-    if (animations || event.submitter !== next || !captureStep(true)) return;
+    if (animations || kpiSort.active() || event.submitter !== next || !captureStep(true)) return;
     if (step < steps.length - 1) {
       void changeStep(1);
     } else {

@@ -9,6 +9,7 @@ import { mapImage, stackImages, svgImage } from './image-export.js';
 import { loadImports, saveImports } from './saved-imports.js';
 import { captureReportMaps } from './report-maps.js';
 import { reportOptions } from './report-options.js';
+import { sortableList } from './sortable-list.js';
 import { mapWorkbook, snapshotDateRequired } from './geo.js';
 import { positionSurvey } from './indoor.js';
 
@@ -249,13 +250,7 @@ function controls() {
   $('files').disabled = restoring || importing || reporting;
   $('report').disabled = importing || reporting || !surveys.length;
   $('clear').disabled = importing || reporting || !surveys.length;
-  const sourceRows = $('source-list').children;
-  for (const [index, row] of [...sourceRows].entries()) {
-    for (const control of row.querySelectorAll('button, select')) {
-      control.disabled = importing || reporting || (control.dataset.move === 'up' && index === 0)
-        || (control.dataset.move === 'down' && index === sourceRows.length - 1);
-    }
-  }
+  for (const control of $('source-list').querySelectorAll('button, select')) control.disabled = importing || reporting;
 }
 
 function filename(value) {
@@ -530,38 +525,55 @@ function removeWorkbook(index) {
   if ($('keep-imports').checked) void persistImports();
 }
 
-function moveWorkbook(index, direction) {
-  const destination = index + (direction === 'up' ? -1 : 1);
-  const moved = surveys[index];
-  [surveys[index], surveys[destination]] = [surveys[destination], moved];
-  renderSurvey(false);
-  const row = $('source-list').children[destination];
-  (row.querySelector(`button[data-move="${direction}"]:enabled`) || row.querySelector('button[data-move]:enabled')).focus();
-  $('status').textContent = `${moved.filename} moved to S${destination + 1}.`;
-  persistIfKept();
+const rowSurvey = new WeakMap();
+function updateWorkbookRow(row, index) {
+  const survey = rowSurvey.get(row);
+  const tag = `S${index + 1}`;
+  row.querySelector('.workbook-name').textContent = `${tag} ${deviceName(survey)} · ${survey.filename} · ${format(survey.rows)} series rows`;
+  row.querySelector('[data-sort-handle]')?.setAttribute('aria-label', `Reorder workbook ${tag}: ${survey.filename}`);
+  row.querySelector('[data-remove]').setAttribute('aria-label', `Remove workbook ${tag}: ${survey.filename}`);
+  const planLabel = row.querySelector('.plan-select span');
+  if (planLabel) planLabel.textContent = `Floor plan for ${tag}`;
 }
 
-function renderSurvey(preferMap = true) {
-  const previous = $('metric').value;
-  keys = [...new Set(surveys.flatMap(survey => survey.metrics.map(metric => metric.key)))];
-  $('explorer').hidden = !keys.length;
-  $('sources').hidden = !surveys.length;
+const workbookSort = sortableList($('source-list'), (row, rows) => {
+  surveys = rows.map(item => rowSurvey.get(item));
+  rows.forEach(updateWorkbookRow);
+  renderSurvey(false, false);
+  $('status').textContent = `${rowSurvey.get(row).filename} moved to S${rows.indexOf(row) + 1}.`;
+  persistIfKept();
+}, { scroll: document.scrollingElement, blocked: () => importing || reporting });
+
+function renderWorkbookList() {
+  workbookSort.cancel();
+  $('workbook-order-hint').hidden = surveys.length < 2;
   $('source-list').replaceChildren(...surveys.map((survey, index) => {
     const item = document.createElement('li');
     const label = document.createElement('span');
     const button = document.createElement('button');
-    label.textContent = `S${index + 1} ${deviceName(survey)} · ${survey.filename} · ${format(survey.rows)} series rows`;
+    rowSurvey.set(item, survey);
+    label.className = 'workbook-name';
+    if (surveys.length > 1) {
+      const handle = document.createElement('button');
+      handle.type = 'button';
+      handle.dataset.sortHandle = '';
+      handle.setAttribute('aria-describedby', 'workbook-order-hint');
+      const glyph = document.createElement('span');
+      glyph.setAttribute('aria-hidden', 'true');
+      glyph.textContent = '\u22ee\u22ee';
+      handle.append(glyph);
+      item.append(handle);
+    }
     button.type = 'button';
     button.dataset.remove = '';
     button.textContent = '×';
-    button.setAttribute('aria-label', `Remove workbook S${index + 1}: ${survey.filename}`);
-    button.addEventListener('click', () => removeWorkbook(index));
+    button.addEventListener('click', () => removeWorkbook(surveys.indexOf(survey)));
     item.append(label);
     if (plans.length) {
       const field = document.createElement('label');
       const select = document.createElement('select');
       field.className = 'plan-select';
-      field.append(Object.assign(document.createElement('span'), { className: 'visually-hidden', textContent: `Floor plan for S${index + 1}` }), select);
+      field.append(Object.assign(document.createElement('span'), { className: 'visually-hidden' }), select);
       select.add(new Option('No floor plan', ''));
       for (const plan of plans) select.add(new Option(`Floor plan: ${plan.name}`, plan.id));
       select.value = planFor(survey) ? survey.planId : '';
@@ -569,29 +581,24 @@ function renderSurvey(preferMap = true) {
         if (select.value) survey.planId = select.value;
         else delete survey.planId;
         const plan = planFor(survey);
-        $('plan-status').textContent = `S${index + 1} ${plan ? `placed on floor plan ${plan.name}` : 'uses its workbook positions'}.`;
+        $('plan-status').textContent = `S${surveys.indexOf(survey) + 1} ${plan ? `placed on floor plan ${plan.name}` : 'uses its workbook positions'}.`;
         renderSurvey();
         persistIfKept();
       });
       item.append(field);
     }
-    const actions = document.createElement('div');
-    actions.className = 'workbook-actions';
-    if (surveys.length > 1) {
-      for (const [direction, symbol] of [['up', '\u2191'], ['down', '\u2193']]) {
-        const move = document.createElement('button');
-        move.type = 'button';
-        move.dataset.move = direction;
-        move.textContent = symbol;
-        move.setAttribute('aria-label', `Move workbook S${index + 1} ${direction}: ${survey.filename}`);
-        move.addEventListener('click', () => moveWorkbook(index, direction));
-        actions.append(move);
-      }
-    }
-    actions.append(button);
-    item.append(actions);
+    item.append(button);
+    updateWorkbookRow(item, index);
     return item;
   }));
+}
+
+function renderSurvey(preferMap = true, rebuildSources = true) {
+  const previous = $('metric').value;
+  keys = [...new Set(surveys.flatMap(survey => survey.metrics.map(metric => metric.key)))];
+  $('explorer').hidden = !keys.length;
+  $('sources').hidden = !surveys.length;
+  if (rebuildSources) renderWorkbookList();
   $('metric').replaceChildren(...keys.map(key => new Option(metricName(key), key)));
   if (keys.includes(previous)) $('metric').value = previous;
   else if (keys.includes('LTE_UE_RSRP')) $('metric').value = 'LTE_UE_RSRP';
@@ -748,7 +755,7 @@ function updatePlanControls() {
   $('basemap').querySelector('option[value="local"]').textContent = mapPlan ? 'No basemap (floor plan only)' : 'No basemap (local)';
   $('plan-controls').hidden = !mapPlan;
   if (!mapPlan) return;
-  $('plan-controls-title').textContent = `Floor plan: ${mapPlan.name}`;
+  $('plan-controls-name').textContent = mapPlan.name;
   showPlanTransparency(mapPlan.transparency || 0);
   const asBasemap = Boolean(mapView?.planIsBasemap());
   $('plan-orientation').hidden = !asBasemap;

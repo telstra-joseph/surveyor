@@ -7,7 +7,14 @@ import { makeReport } from '../src/report.js';
 import { mapImage, stackImages } from '../src/image-export.js';
 import { parseWorkbook } from '../src/survey.js';
 import { orderWorkbookBatch } from '../src/workers.js';
-import { defaultReportKpiOrder } from '../src/report-options.js';
+import { applySavedKpiOrder, defaultReportKpiOrder } from '../src/report-options.js';
+
+test('restores saved KPI positions and adds newly available KPIs in their default order', () => {
+  assert.deepEqual(applySavedKpiOrder(
+    ['Technology_Mode', 'NR_UE_PCI_0', 'LTE_UE_RSRP', 'NR_UE_SINR_0', 'LTE_UE_PCI'],
+    ['LTE_UE_PCI', 'missing', 'Technology_Mode', 'LTE_UE_PCI'],
+  ), ['LTE_UE_PCI', 'Technology_Mode', 'NR_UE_PCI_0', 'NR_UE_SINR_0', 'LTE_UE_RSRP']);
+});
 
 test('groups NR KPIs at the first NR entry while preserving order within both groups', () => {
   assert.deepEqual(defaultReportKpiOrder(['Technology_Mode', 'NR_UE_PCI_0', 'LTE_UE_RSRP', '5G NR SS-SINR', 'App_Throughput_DL']), [
