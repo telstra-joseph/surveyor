@@ -257,6 +257,7 @@ summary { width: fit-content; cursor: pointer; font-weight: 700; }
 @media (prefers-reduced-motion: no-preference) {
   details::details-content {
     interpolate-size: allow-keywords;
+    display: flow-root;
     block-size: 0;
     overflow: clip;
     opacity: 0;
@@ -381,7 +382,7 @@ footer { color: var(--muted); padding-block: .75rem 2rem; }
 .actix-sector svg, .actix-site-centre svg, .actix-site-label span { opacity: var(--actix-opacity, 1); }
 #sector-key { margin-block-start: 1.15rem; }
 #map-options > summary, #sector-key > summary { font-weight: 700; cursor: pointer; }
-#sector-key[open] > summary { margin-block-end: .35rem; }
+#sector-legend { padding-block-start: .35rem; }
 #sector-legend { display: grid; gap: .3rem; }
 #sector-legend > div { display: grid; grid-template-columns: 2.5rem minmax(0, 1fr); align-items: baseline; }
 #sector-key h5 { margin: 0; font-size: inherit; }
