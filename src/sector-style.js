@@ -6,8 +6,10 @@ const carrierColors = new Map(Object.entries({
 }));
 const bands = {
   LTE: new Map(Object.entries({ F: '700', H: '850e', E: '1800', K: '1800', J: '2100', A: '2600', B: '2600' })),
-  NR: new Map(Object.entries({ V: '850', W: '850', Z: '2600', X: '2600', C: '3600', R: '3700', D: '26000' })),
+  NR: new Map(Object.entries({ V: '850', W: '850e', Z: '2600', X: '2600', C: '3600', R: '3700', D: '26000' })),
 };
+
+export const carrierBand = (rat, carrier) => bands[rat].get(carrier === 'DA' ? 'D' : carrier);
 
 export function carrierCode(site, ...labels) {
   const prefix = site.toUpperCase();
@@ -63,7 +65,7 @@ export function sectorLegendGroups(sectors) {
       // PCI-coloured cells are already explained by the KPI legend.
       if (sector.rat !== rat || sector.pciColor) continue;
       const code = sector.carrier === 'DA' ? 'D' : sector.carrier;
-      const band = bands[rat].get(code);
+      const band = carrierBand(rat, sector.carrier);
       entries.set(code, { label: band ? `${code} ${band} MHz` : code || 'Unknown', color: sectorColor(sector), band });
     }
     return entries.size ? [{

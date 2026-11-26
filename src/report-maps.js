@@ -48,8 +48,8 @@ export async function captureReportMaps({ surveys, plans = [], bearing = 0, keys
       if (plan && !plan.orientationConfirmed && !plan.bearing) view.alignToFloorPlan();
       const mapBasemap = plan ? 'local' : basemap;
       if (mapBasemap === 'local') view.setBasemap('local');
-      // Georeferenced indoor PCI maps need Actix matches for the legend, even though site overlays stay hidden.
-      const catalog = !plan ? snapshots : planar ? [] : snapshots.filter(({ rat }) => radioFields[rat][1] === key);
+      // Georeferenced indoor PCI and channel maps use Actix legend labels without rendering site overlays.
+      const catalog = !plan ? snapshots : planar ? [] : snapshots.filter(({ rat }) => radioFields[rat].slice(1).includes(key));
       const { map } = await request({
         type: 'map', key, snapshots: catalog, maxDays,
         legendMode: multipleWorkbooks && supportsMapThresholds(key) ? (thresholds ? 'thresholds' : 'ue') : 'auto',

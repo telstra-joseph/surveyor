@@ -2,7 +2,7 @@ import Papa from 'papaparse';
 import { callDropKey, dropLegendEntry, isDropDetected, technologyModeKey } from './charts.js';
 import { colorMapCategories, colorMapValues, isIdentifierKpi } from './map-colors.js';
 import { applyMapThresholds, supportsMapThresholds } from './map-thresholds.js';
-import { carrierCode, sectorKey } from './sector-style.js';
+import { carrierBand, carrierCode, sectorKey } from './sector-style.js';
 
 const dayMs = 86_400_000;
 export const radioFields = {
@@ -100,8 +100,9 @@ export function closestSnapshot(snapshots, rat, day, maxDays) {
   return best;
 }
 
-function indexCells(cells) {
+function indexCells({ cells, rat }, includeChannelBands) {
   const ids = new Map(), pairs = new Map(), bySite = new Map();
+  const bandsByChannel = new Map();
   function add(map, key, cell) {
     if (!map.has(key)) map.set(key, []);
     map.get(key).push(cell);
@@ -110,8 +111,15 @@ function indexCells(cells) {
     if (cell.id) add(ids, cell.id, cell);
     if (cell.pci !== null && cell.channel !== null) add(pairs, `${cell.pci}/${cell.channel}`, cell);
     if (cell.site && cell.coords && cell.angles) add(bySite, cell.site, cell);
+    if (includeChannelBands && Number.isSafeInteger(cell.channel)) {
+      const band = carrierBand(rat, cell.carrier);
+      if (band) {
+        if (!bandsByChannel.has(cell.channel)) bandsByChannel.set(cell.channel, new Set());
+        bandsByChannel.get(cell.channel).add(band);
+      }
+    }
   }
-  return { ids, pairs, bySite };
+  return { ids, pairs, bySite, bandsByChannel };
 }
 
 const distance = ([a, b], [c, d]) => {
@@ -178,6 +186,8 @@ export function mapFeatures({ workbooks, snapshots, key, maxDays, legendMode = '
   const sectors = new Map(), sectorGroups = new Map();
   const features = [];
   const pciRat = Object.keys(radioFields).find(rat => radioFields[rat][1] === key);
+  const channelRat = Object.keys(radioFields).find(rat => radioFields[rat][2] === key);
+  const channelBands = new Map();
   const pciNames = new Map();
   const pciCounts = new Map();
   const isTechnologyMode = key === technologyModeKey;
@@ -204,24 +214,35 @@ export function mapFeatures({ workbooks, snapshots, key, maxDays, legendMode = '
         NETWORK: survey.network === 'telstra' ? 'Telstra' : survey.network === 'other' ? 'Non-Telstra evidence' : 'Telstra (assumed)' };
       const sample = { type: 'Feature', geometry: { type: 'Point', coordinates: coords }, properties: props };
       for (const [rat, prefix] of [['LTE', 'L'], ['NR', 'N']]) {
-        const values = radio[rat];
-        if (!values?.some(value => value !== null)) continue;
+        const values = radio[rat] || [];
+        const hasRadio = values.some(value => value !== null);
+        if (!hasRadio && rat !== channelRat) continue;
         if (survey.network === 'other') {
-          props[`${prefix}_MATCH`] = 'Skipped: non-Telstra evidence';
+          if (hasRadio) props[`${prefix}_MATCH`] = 'Skipped: non-Telstra evidence';
           continue;
         }
         const lookup = `${rat}/${day}`;
         if (!dates.has(lookup)) dates.set(lookup, closestSnapshot(snapshots, rat, day, maxDays));
         const chosen = dates.get(lookup);
         if (!chosen) {
-          props[`${prefix}_MATCH`] = day ? 'No nearby snapshot' : 'Survey date unknown';
+          if (hasRadio) props[`${prefix}_MATCH`] = day ? 'No nearby snapshot' : 'Survey date unknown';
           continue;
         }
         const { snapshot, days } = chosen;
-        if (!indexes.has(snapshot)) indexes.set(snapshot, indexCells(snapshot.cells));
+        if (!indexes.has(snapshot)) indexes.set(snapshot, indexCells(snapshot, rat === channelRat));
         const index = indexes.get(snapshot);
         const carriedId = identities[rat]?.get(row);
         const match = matchCell(index, carriedId === undefined ? values : [carriedId, values[1], values[2]], coords);
+        if (rat === channelRat) {
+          const candidates = index.bandsByChannel.get(value);
+          const matchedBand = match.unambiguous && match.channel === value && carrierBand(rat, match.carrier);
+          const band = matchedBand || (candidates?.size === 1 ? candidates.values().next().value : undefined);
+          if (band) {
+            if (!channelBands.has(value)) channelBands.set(value, new Set());
+            channelBands.get(value).add(band);
+          }
+        }
+        if (!hasRadio) continue;
         if (rat === pciRat && typeof value === 'number' && match.name && match.unambiguous &&
             (match.pci === null || match.pci === value)) {
           if (!pciNames.has(value)) pciNames.set(value, new Map());
@@ -270,6 +291,8 @@ export function mapFeatures({ workbooks, snapshots, key, maxDays, legendMode = '
     : categorical ? colorMapCategories(features) : [];
   if (pciRat) categoryLegend.sort((a, b) => pciCounts.get(b.value) - pciCounts.get(a.value));
   for (const entry of categoryLegend) {
+    const bands = channelBands.get(entry.value);
+    if (bands) entry.channelBands = [...bands].sort((a, b) => parseInt(a, 10) - parseInt(b, 10) || a.localeCompare(b));
     const names = pciNames.get(entry.value);
     if (names) entry.cells = [...names].sort(([a], [b]) => a.localeCompare(b))
       .map(([name, exact]) => ({ name, exact }));

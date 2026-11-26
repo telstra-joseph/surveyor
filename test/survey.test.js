@@ -255,16 +255,16 @@ test('PowerPoint centres a tightly cropped floor plan in the map area without on
   assert.ok(Math.abs((top + height) / inches - 6.84) < .001);
 });
 
-test('PowerPoint map legends show matched PCI names and downlink frequencies', async () => {
-  const entry = (value, cells) => ({ value, label: String(value), color: '#0D54FF', cells });
+test('PowerPoint map legends show matched PCI names and Actix carrier bands', async () => {
+  const entry = (value, cells, channelBands) => ({ value, label: String(value), color: '#0D54FF', cells, channelBands });
   const cases = [
     ['Technology_Mode', [entry('LTE')], ['Legend', 'LTE']],
     ['LTE_UE_PCI', [entry(172, [{ name: 'SITEBM4', exact: true }]), entry(173)], ['Legend', '172 — SITEBM4', '173']],
     ['NR_UE_PCI_0', [entry(85, [{ name: 'SITEVM1', exact: false }])], ['Legend', '85 — SITEVM1 (candidate)']],
-    ['LTE_UE_EARFCN_DL', [entry(1725), entry(9410), entry(5000)],
-      ['LTE EARFCN', 'Channel number', '1725 — 1857.5 MHz', '9410 — 778 MHz', '5000 — frequency unavailable']],
-    ['NR_UE_NR_ARFCN_DL_0', [entry(173000), entry(650000), entry(2016667)],
-      ['NR-ARFCN', 'Channel number', '173000 — 865 MHz', '650000 — 3750 MHz', '2016667 — 24250.08 MHz']],
+    ['LTE_UE_EARFCN_DL', [entry(1725, undefined, ['1800']), entry(2425, undefined, ['850e']), entry(5000)],
+      ['LTE EARFCN', 'Channel number', '1725 — 1800 MHz', '2425 — 850e MHz', '5000']],
+    ['NR_UE_NR_ARFCN_DL_0', [entry(173000, undefined, ['850e']), entry(650000, undefined, ['3700']), entry(2016667)],
+      ['NR-ARFCN', 'Channel number', '173000 — 850e MHz', '650000 — 3700 MHz', '2016667']],
   ];
   const deck = await makeReport({
     location: 'Test site', keys: cases.map(([key]) => key), surveys: [{ filename: 'UE1.xlsx', metrics: [] }],

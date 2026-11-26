@@ -35,8 +35,33 @@ test('groups and deduplicates sector bands without guessing unmapped frequencies
   ];
   assert.deepEqual(sectorLegendGroups(sectors).map(({ rat, entries }) => [rat, entries.map(({ label }) => label)]), [
     ['LTE', ['H 850e MHz', 'W']],
-    ['NR', ['V 850 MHz', 'W 850 MHz', 'X 2600 MHz', 'D 26000 MHz']],
+    ['NR', ['V 850 MHz', 'W 850e MHz', 'X 2600 MHz', 'D 26000 MHz']],
   ]);
+});
+
+test('channel legend bands use matching Actix carriers without guessing between ambiguous bands', () => {
+  const nr = parseActix(`SiteID,Latitude,Longitude,DL_NR_ARFCN,NR_PCI,NCI,CELL_NAME
+TEST,-32,151,173000,1,100,TESTWM1
+TEST,-32,151,173000,2,200,TESTVM2
+TEST,-32,151,174000,3,300,TESTVM3
+TEST,-32,151,172000,4,400,TESTVM4
+TEST,-32,151,172000,5,500,TESTWM5`, 'nr 2026-10-13.csv');
+  const lte = parseActix(`SiteID,Latitude,Longitude,DL_EARFCN,PCI,ECI,CELL_NAME
+TEST,-32,151,2425,1,101,TESTHM1`, 'lte 2026-10-13.csv');
+  const bands = (snapshot, rows) => {
+    const rat = snapshot.rat;
+    const key = radioFields[rat][2];
+    const series = rows.map(([channel], row) => [row, channel]);
+    const geography = rows.map(([channel, id]) => ({
+      coords: [151, -32], day: '2026-10-13', radio: id === undefined ? {} : { [rat]: [id, null, channel] },
+    }));
+    const survey = { filename: 'UE1.xlsx', geography, metrics: [{ key, series }] };
+    const { categoryLegend } = mapFeatures({ key, snapshots: [snapshot], maxDays: 0, workbooks: [mapWorkbook(survey, key, 'S1', '#000000')] });
+    return Object.fromEntries(categoryLegend.map(({ value, channelBands }) => [value, channelBands]));
+  };
+  assert.deepEqual(bands(nr, [[173000, 100], [174000], [172000], [650000]]),
+    { 173000: ['850e'], 174000: ['850'], 172000: undefined, 650000: undefined });
+  assert.deepEqual(bands(lte, [[2425, 101]]), { 2425: ['850e'] });
 });
 
 test('colours the technology map by same-row series values, not workbook names or histogram bins', async () => {
