@@ -134,14 +134,6 @@
           <div id="map-panel" hidden>
             <details id="map-options" open>
               <summary>Map settings</summary>
-            <div class="filters map-controls">
-              <div><label for="basemap">Basemap</label><select id="basemap">
-                <option value="street" selected>Street (OpenStreetMap)</option>
-                <option value="hybrid">Hybrid</option>
-                <option value="satellite">Satellite</option>
-                <option value="local">No basemap (local)</option>
-              </select></div>
-            </div>
             <fieldset class="map-settings" id="site-controls" hidden>
               <legend id="site-controls-title">Sites</legend>
               <div class="filters site-toggles">
@@ -186,7 +178,16 @@
             </fieldset>
             </details>
             <p id="map-scale" hidden></p>
-            <div id="survey-map" role="region" aria-label="Interactive KPI map" tabindex="0"></div>
+            <div id="survey-map" role="region" aria-label="Interactive KPI map" tabindex="0">
+              <div class="basemap-control">
+                <select id="basemap" aria-label="Basemap" title="Basemap">
+                  <option value="street" selected>Street (OpenStreetMap)</option>
+                  <option value="hybrid">Hybrid</option>
+                  <option value="satellite">Satellite</option>
+                  <option value="local">No basemap (local)</option>
+                </select>
+              </div>
+            </div>
             <div class="actions">
               <button type="button" id="fit-map" disabled>Fit to samples</button>
               <button type="button" id="download-kml" class="export-icon" aria-label="Download KML" disabled>

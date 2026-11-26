@@ -91,7 +91,7 @@ Distribution counts are not time shares. Missing values are not interpreted as z
 
 ### Web basemaps
 
-Collapse **Map settings** to tuck away the basemap, site, and floor-plan controls without hiding the map. The **Actix sector legend** can be collapsed separately when it is visible.
+Choose the basemap from the preview tile in the map's upper-right corner. The preview illustrates the selected style without loading extra tiles. Collapse **Map settings** to tuck away the site and floor-plan controls without hiding the map. The **Actix sector legend** can be collapsed separately when it is visible.
 
 Map image downloads and clipboard copies retain the plotted points and visible Actix overlays, without basemap tiles or pop-ups. When no floor plan is visible, map images follow the current viewport. When they include a plan, image and PowerPoint exports frame it at the source image's aspect ratio, adding padding as needed to preserve its orientation without stretching the map. The **Both** download adds the active map legend to the image. KML and Shapefile downloads are unchanged.
 

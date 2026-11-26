@@ -364,6 +364,11 @@ export function createMapView(element, selector, reportError, capture = false, {
     option.textContent += ' (not configured)';
   }
   if (selector.selectedOptions[0]?.disabled) selector.value = 'local';
+  if (!capture) {
+    L.DomEvent.disableClickPropagation(selector.parentElement);
+    L.DomEvent.disableScrollPropagation(selector.parentElement);
+    L.DomEvent.on(selector, 'keydown', L.DomEvent.stopPropagation);
+  }
 
   function setBasemap(value, retry = false) {
     if (planar) value = 'local';
