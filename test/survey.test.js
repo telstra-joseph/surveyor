@@ -7,6 +7,13 @@ import { makeReport } from '../src/report.js';
 import { mapImage, stackImages } from '../src/image-export.js';
 import { parseWorkbook } from '../src/survey.js';
 import { orderWorkbookBatch } from '../src/workers.js';
+import { defaultReportKpiOrder } from '../src/report-options.js';
+
+test('groups NR KPIs at the first NR entry while preserving order within both groups', () => {
+  assert.deepEqual(defaultReportKpiOrder(['Technology_Mode', 'NR_UE_PCI_0', 'LTE_UE_RSRP', '5G NR SS-SINR', 'App_Throughput_DL']), [
+    'Technology_Mode', 'NR_UE_PCI_0', '5G NR SS-SINR', 'LTE_UE_RSRP', 'App_Throughput_DL',
+  ]);
+});
 
 test('orders a batch numerically by workbook UE, preserving ties and placing unidentified logs last', () => {
   const unnamed = { filename: 'queue1.xlsx' };

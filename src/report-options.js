@@ -6,6 +6,16 @@ const steps = ['Choose workbooks', 'Choose KPIs', 'Customise PowerPoint', 'Arran
 const checkbox = (value, label, checked) => `<label class="checkbox-label">
   <input type="checkbox" value="${escapeMarkup(String(value))}" ${checked ? 'checked' : ''}>
   ${escapeMarkup(label)}</label>`;
+const moveButtons = (name, index, count) => `<div class="actions">
+  <button type="button" data-move="-1" aria-label="Move ${escapeMarkup(name)} up" ${index === 0 ? 'disabled' : ''}>Move up</button>
+  <button type="button" data-move="1" aria-label="Move ${escapeMarkup(name)} down" ${index === count - 1 ? 'disabled' : ''}>Move down</button>
+</div>`;
+
+export function defaultReportKpiOrder(keys) {
+  const isNr = key => /^(?:5G[\s_-]+)?NR(?:[\s_-]|$)/i.test(key);
+  const firstNr = keys.findIndex(isNr);
+  return firstNr < 0 ? keys : [...keys.slice(0, firstNr), ...keys.slice(firstNr).filter(isNr), ...keys.slice(firstNr).filter(key => !isNr(key))];
+}
 
 export function reportOptions(openButton, getSurveys, onExport) {
   const dialog = document.getElementById('report-dialog');
@@ -16,10 +26,16 @@ export function reportOptions(openButton, getSurveys, onExport) {
   const status = document.getElementById('report-order-status');
   const back = document.getElementById('report-back');
   const next = document.getElementById('report-next');
-  let step, surveys, selected, order, excludedKeys, overrides, workbookSections, addDividers, dividerTitles;
+  const stepPanels = [title.parentElement, content];
+  const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
+  let step, surveys, selected, order, kpiOrder, excludedKeys, overrides, workbookSections, addDividers, dividerTitles;
+  let animations;
 
   const metrics = () => order.flatMap(i => surveys[i].metrics);
-  const availableKeys = () => [...new Set(metrics().map(metric => metric.key))];
+  const availableKeys = () => {
+    const available = new Set(metrics().map(metric => metric.key));
+    return kpiOrder.filter(key => available.has(key));
+  };
   const editableKeys = () => [...new Set(metrics().filter(metric =>
     !excludedKeys.has(metric.key) && metric.geoCount && thresholdProfile(metric.key)).map(metric => metric.key))];
   const workbookName = i => `S${i + 1} · ${surveys[i].filename}`;
@@ -68,10 +84,22 @@ export function reportOptions(openButton, getSurveys, onExport) {
       ${addDividers ? '<p>To compare workbooks by KPI, go back and turn off divider slides.</p>' : ''}
       <p>${workbookSections ? 'Move workbooks up or down to set their slide order.' : 'Move workbooks up or down to set their order within the comparisons.'}</p>
       <ol class="report-order">${order.map((id, i) => `<li tabindex="-1" data-workbook="${id}">
-        <span>${escapeMarkup(workbookName(id))}</span><div class="actions">
-          <button type="button" data-move="-1" aria-label="Move S${id + 1} up" ${i === 0 ? 'disabled' : ''}>Move up</button>
-          <button type="button" data-move="1" aria-label="Move S${id + 1} down" ${i === order.length - 1 ? 'disabled' : ''}>Move down</button>
-        </div></li>`).join('')}</ol>`;
+        <span>${escapeMarkup(workbookName(id))}</span>${moveButtons(`S${id + 1}`, i, order.length)}
+      </li>`).join('')}</ol>`;
+  }
+
+  function renderChoices() {
+    const keys = availableKeys();
+    content.innerHTML = `<div class="actions">
+      <button type="button" data-select="all">Select all</button>
+      <button type="button" data-select="none">Clear selection</button>
+    </div>${step === 0
+      ? `<div class="report-choices" role="group" aria-label="Workbooks">${surveys.map((_, i) =>
+        checkbox(i, workbookName(i), selected.has(i))).join('')}</div>`
+      : `<p>Move KPIs up or down to set their order in the PowerPoint.</p>
+        <ol class="report-order report-kpi-order" aria-label="KPIs">${keys.map((key, i) => `<li tabindex="-1">
+          ${checkbox(key, reportMetricName(key), !excludedKeys.has(key))}${moveButtons(reportMetricName(key), i, keys.length)}
+        </li>`).join('')}</ol>`}`;
   }
 
   function render() {
@@ -81,18 +109,38 @@ export function reportOptions(openButton, getSurveys, onExport) {
     status.textContent = '';
     back.hidden = step === 0;
     next.textContent = step === steps.length - 1 ? 'Download PowerPoint' : 'Next';
-    if (step < 2) {
-      const boxes = step === 0
-        ? surveys.map((_, i) => checkbox(i, workbookName(i), selected.has(i)))
-        : availableKeys().map(key => checkbox(key, reportMetricName(key), !excludedKeys.has(key)));
-      content.innerHTML = `<div class="actions">
-        <button type="button" data-select="all">Select all</button>
-        <button type="button" data-select="none">Clear selection</button>
-      </div><div class="report-choices" role="group" aria-label="${step === 0 ? 'Workbooks' : 'KPIs'}">${boxes.join('')}</div>`;
-    } else if (step === 2) renderCustomisation();
+    if (step < 2) renderChoices();
+    else if (step === 2) renderCustomisation();
     else renderOrder();
     content.scrollTop = 0;
     title.focus();
+  }
+
+  function stopTransition() {
+    for (const animation of animations || []) animation.cancel();
+    animations = undefined;
+    content.inert = false;
+  }
+
+  async function changeStep(direction) {
+    if (reduceMotion.matches || !content.animate) {
+      step += direction;
+      render();
+      return;
+    }
+    const frame = (opacity, offset) => ({ opacity, transform: `translateX(${offset}px)` });
+    const animate = (frames, duration) => stepPanels.map(panel =>
+      panel.animate(frames, { duration, easing: 'ease-out', fill: 'both' }));
+    const outgoing = animations = animate([frame(1, 0), frame(0, -16 * direction)], 110);
+    content.inert = true;
+    await Promise.allSettled(outgoing.map(animation => animation.finished));
+    if (animations !== outgoing || !dialog.open) return;
+    stopTransition();
+    step += direction;
+    render();
+    const incoming = animations = animate([frame(0, 16 * direction), frame(1, 0)], 170);
+    await Promise.allSettled(incoming.map(animation => animation.finished));
+    if (animations === incoming) stopTransition();
   }
 
   function captureStep(validate) {
@@ -131,8 +179,10 @@ export function reportOptions(openButton, getSurveys, onExport) {
   }
 
   openButton.addEventListener('click', () => {
+    stopTransition();
     surveys = getSurveys();
     order = surveys.map((_, i) => i);
+    kpiOrder = defaultReportKpiOrder([...new Set(metrics().map(metric => metric.key))]);
     selected = new Set(order);
     excludedKeys = new Set();
     overrides = new Map();
@@ -144,10 +194,11 @@ export function reportOptions(openButton, getSurveys, onExport) {
     render();
   });
   document.getElementById('report-cancel').addEventListener('click', () => dialog.close());
+  dialog.addEventListener('close', () => { if (!dialog.open) stopTransition(); });
   back.addEventListener('click', () => {
+    if (animations) return;
     captureStep(false);
-    step--;
-    render();
+    void changeStep(-1);
   });
   content.addEventListener('input', ({ target }) => {
     error.textContent = '';
@@ -196,22 +247,33 @@ export function reportOptions(openButton, getSurveys, onExport) {
       content.scrollTop = scroll;
       error.textContent = '';
     } else if (target.matches('[data-move]')) {
-      const id = Number(target.closest('li').dataset.workbook);
-      const i = order.indexOf(id);
+      const list = content.querySelector('.report-order');
+      const i = [...list.children].indexOf(target.closest('li'));
       const position = i + Number(target.dataset.move);
-      [order[i], order[position]] = [order[position], order[i]];
-      renderOrder();
-      const row = content.querySelector(`[data-workbook="${id}"]`);
+      const count = list.children.length;
+      let name;
+      if (step === 1) {
+        captureStep(false);
+        const keys = availableKeys();
+        const from = kpiOrder.indexOf(keys[i]), to = kpiOrder.indexOf(keys[position]);
+        [kpiOrder[from], kpiOrder[to]] = [kpiOrder[to], kpiOrder[from]];
+        name = reportMetricName(keys[i]);
+        renderChoices();
+      } else {
+        name = `S${order[i] + 1}`;
+        [order[i], order[position]] = [order[position], order[i]];
+        renderOrder();
+      }
+      const row = content.querySelector('.report-order').children[position];
       (row.querySelector(`[data-move="${target.dataset.move}"]:enabled`) || row).focus();
-      status.textContent = `S${id + 1} moved to position ${position + 1} of ${order.length}.`;
+      status.textContent = `${name} moved to position ${position + 1} of ${count}.`;
     }
   });
   form.addEventListener('submit', event => {
     event.preventDefault();
-    if (event.submitter !== next || !captureStep(true)) return;
+    if (animations || event.submitter !== next || !captureStep(true)) return;
     if (step < steps.length - 1) {
-      step++;
-      render();
+      void changeStep(1);
     } else {
       dialog.close();
       onExport({ surveys: order.map(i => ({ ...surveys[i], sourceIndex: i })), keys: availableKeys().filter(key => !excludedKeys.has(key)),

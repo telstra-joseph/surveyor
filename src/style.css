@@ -166,6 +166,12 @@ button.theme-switch { display: grid; place-items: center; width: var(--button-si
 button:not(:disabled):not([aria-disabled="true"]):hover,
 #survey-map :is(.leaflet-control-zoom > a:not(.leaflet-disabled), .map-rotate-compass):hover { box-shadow: inset 0 0 0 1px currentColor; }
 button.theme-switch:not(:disabled):not([aria-disabled="true"]):hover { box-shadow: inset 0 0 0 2px currentColor; }
+@media (prefers-reduced-motion: no-preference) {
+  :is(button, select, input:not([type="range"])), input::file-selector-button,
+  #survey-map :is(.leaflet-control-zoom > a, .map-rotate-compass) {
+    transition: background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease, color 150ms ease;
+  }
+}
 button:disabled, button[aria-disabled="true"],
 #survey-map .leaflet-control-zoom > a.leaflet-disabled { color: light-dark(#52596b, var(--muted)); background: light-dark(#eeedf0, var(--navy)); border-color: light-dark(#b6b8bf, var(--dark-line)); cursor: default; }
 :focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
@@ -290,7 +296,7 @@ footer { color: var(--muted); padding-block: .75rem 2rem; }
   padding: 0; border: 1px solid var(--line); border-radius: 1rem; color: var(--ink); background: var(--surface);
 }
 #report-dialog::backdrop { background: rgb(19 26 53 / .62); }
-#report-options { display: flex; flex-direction: column; max-height: calc(100dvh - 1.5rem - 2px); }
+#report-options { display: flex; flex-direction: column; max-height: calc(100dvh - 1.5rem - 2px); overflow-x: clip; }
 #report-options > :is(header, footer) { padding: .85rem clamp(.75rem, 4vw, 1.4rem); }
 #report-options footer { justify-content: flex-end; margin: 0; border-top: 1px solid var(--line); }
 #report-cancel { margin-inline-end: auto; }
@@ -309,6 +315,7 @@ footer { color: var(--muted); padding-block: .75rem 2rem; }
 .report-order { padding-inline-start: 1.5rem; }
 .report-order li { margin-bottom: .55rem; }
 .report-order .actions { margin-top: .2rem; }
+.report-kpi-order li { padding-block: .3rem; border-bottom: 1px solid var(--line); }
 .exports { align-items: end; }
 @media (max-width: 38rem) {
   #source-list li { flex-wrap: wrap; }
