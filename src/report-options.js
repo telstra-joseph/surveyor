@@ -8,9 +8,13 @@ const kpiOrderStorageKey = 'surveyor-report-kpi-order';
 const checkbox = (value, label, checked, number = '') => `<label class="checkbox-label">
   <input type="checkbox" value="${escapeMarkup(String(value))}" ${checked ? 'checked' : ''}>
   <span>${number ? `<strong>${number}</strong> · ` : ''}${escapeMarkup(label)}</span></label>`;
+const moveArrow = down => `<svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+  <path ${down ? 'transform="rotate(180 12 12)"' : ''} d="M5 3h14M12 21V7m-5 5 5-5 5 5" fill="none"
+    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>`;
 const moveButtons = (name, index, count) => `<div class="actions">
-  <button type="button" data-move="-1" aria-label="Move ${escapeMarkup(name)} up" ${index === 0 ? 'disabled' : ''}>Move up</button>
-  <button type="button" data-move="1" aria-label="Move ${escapeMarkup(name)} down" ${index === count - 1 ? 'disabled' : ''}>Move down</button>
+  <button type="button" data-move="-1" aria-label="Move ${escapeMarkup(name)} up" ${index === 0 ? 'disabled' : ''}>${moveArrow(false)}</button>
+  <button type="button" data-move="1" aria-label="Move ${escapeMarkup(name)} down" ${index === count - 1 ? 'disabled' : ''}>${moveArrow(true)}</button>
 </div>`;
 
 export function defaultReportKpiOrder(keys) {
@@ -176,7 +180,7 @@ export function reportOptions(openButton, getSurveys, onExport) {
 
   function render() {
     title.textContent = steps[step];
-    document.getElementById('report-step-number').textContent = `POWERPOINT · STEP ${step + 1} OF ${steps.length}`;
+    document.getElementById('report-step-number').textContent = `STEP ${step + 1} OF ${steps.length}`;
     error.textContent = '';
     status.textContent = '';
     back.hidden = step === 0;
@@ -342,6 +346,7 @@ export function reportOptions(openButton, getSurveys, onExport) {
     }
   });
   content.addEventListener('click', ({ target }) => {
+    const moveButton = target.closest('button[data-move]:enabled');
     if (target.matches('[data-select]')) {
       for (const box of content.querySelectorAll('input')) box.checked = target.dataset.select === 'all';
       error.textContent = '';
@@ -379,10 +384,11 @@ export function reportOptions(openButton, getSurveys, onExport) {
       }
       renderOrder();
       content.querySelector('[data-add-section]').focus();
-    } else if (target.matches('[data-move]')) {
+    } else if (moveButton) {
       const list = content.querySelector('.report-order');
-      const i = [...list.children].indexOf(target.closest('li'));
-      const position = i + Number(target.dataset.move);
+      const i = [...list.children].indexOf(moveButton.closest('li'));
+      const direction = moveButton.dataset.move;
+      const position = i + Number(direction);
       const count = list.children.length;
       let name;
       if (floorSections && !hasFloorPlans()) {
@@ -399,7 +405,7 @@ export function reportOptions(openButton, getSurveys, onExport) {
       }
       renderOrder();
       const row = content.querySelector('.report-order').children[position];
-      (row.querySelector(`[data-move="${target.dataset.move}"]:enabled`) || row).focus();
+      (row.querySelector(`[data-move="${direction}"]:enabled`) || row).focus();
       status.textContent = `${name} moved to position ${position + 1} of ${count}.`;
     }
   });
