@@ -5,6 +5,10 @@ export const theme = {
 };
 
 export const technologyModeKey = 'Technology_Mode';
+export const isPciKpi = key => key === 'LTE_UE_PCI' || key === 'NR_UE_PCI_0';
+export const callDropKey = 'Voice_Event_CallDrop';
+export const isDropDetected = value => value === 1;
+export const dropLegendEntry = { value: 1, label: 'Drop detected', color: theme.blue };
 const names = {
   LTE_UE_RSRP: 'LTE RSRP (dBm)', LTE_UE_SINR: 'LTE SINR (dB)',
   NR_UE_RSRP_0: '5G NR RSRP (dBm)', NR_UE_SINR_0: '5G NR SINR (dB)',
@@ -12,7 +16,7 @@ const names = {
   App_Throughput_DL: 'Downlink throughput (source units)',
   App_Throughput_UL: 'Uplink throughput (source units)',
   Voice_Event_CallAttempt: 'Call attempts', Voice_Call_EndResult: 'Call outcomes',
-  Voice_Event_CallDrop: 'Call drops', Voice_Event_CallSetupFail: 'Call setup failures',
+  [callDropKey]: 'Call drops', Voice_Event_CallSetupFail: 'Call setup failures',
   [technologyModeKey]: 'Technology mode', LTE_Uu_RRC_ECI: 'LTE cell identity',
   LTE_UE_PCI: 'LTE PCI', LTE_UE_EARFCN_DL: 'LTE downlink EARFCN',
   NR_UE_PCI_0: '5G NR PCI', NR_UE_NR_ARFCN_DL_0: '5G NR downlink ARFCN',
@@ -25,13 +29,21 @@ export const format = new Intl.NumberFormat('en-AU', { maximumFractionDigits: 4 
 export const deviceName = survey => survey.profile || survey.filename.replace(/\.xlsx$/i, '');
 const shorten = (value, limit) => value.length > limit ? `${value.slice(0, limit - 1)}…` : value;
 
+export function hasMappedSamples(survey, metric) {
+  return metric.key === callDropKey
+    ? metric.series?.some(([row, value]) => isDropDetected(value) && survey.geography[row]?.coords)
+    : metric.geoCount > 0;
+}
+
 export function datasets(surveys, key, mode) {
   return surveys.flatMap((survey, index) => {
     const metric = survey.metrics.find(metric => metric.key === key);
     const data = metric?.[mode];
-    return (mode === 'map' ? metric?.geoCount : data?.length) ? [{
-      tag: `S${(survey.sourceIndex ?? index) + 1}`, name: deviceName(survey), color: colors[index % colors.length],
-      group: Math.floor(index / colors.length), index, data,
+    const dropSeries = key === callDropKey && mode === 'series';
+    return (mode === 'map' ? metric && hasMappedSamples(survey, metric) : data?.length) ? [{
+      tag: `S${(survey.sourceIndex ?? index) + 1}`, name: deviceName(survey),
+      color: dropSeries ? dropLegendEntry.color : colors[index % colors.length],
+      group: Math.floor(index / colors.length), index, data: dropSeries ? data.filter(([, value]) => isDropDetected(value)) : data,
       // Each floor plan has its own coordinate frame, so map groups never mix plans.
       ...(mode === 'map' && survey.planId ? { plan: survey.planId } : {}),
     }] : [];
@@ -103,13 +115,15 @@ export function chart(title, mode, items, page = 0) {
     max = Math.ceil(max / step) * step;
   } else {
     for (const { data } of items) {
+      if (!data.length) continue;
       last = Math.max(last, data.at(-1)[0]);
       for (const [, value] of data) {
         min = Math.min(min, value);
         max = Math.max(max, value);
       }
     }
-    if (min === max) { min -= 1; max += 1; }
+    if (!Number.isFinite(min)) { min = 0; max = 1; }
+    else if (min === max) { min -= 1; max += 1; }
   }
   const yAt = value => bottom - (value - min) / (max - min) * (bottom - top);
   for (let i = 0; i <= 4; i++) {
@@ -156,6 +170,8 @@ export function legend(title, items) {
     color, label: `${tag}  ${shorten(name, items.length > 4 ? 43 : 93)}`,
   })));
 }
+
+export const dropSeriesLegend = items => items.some(({ data }) => data.length) ? [dropLegendEntry] : [];
 
 export function legendImage(title, items) {
   const columns = items.length > 4 ? 2 : 1;

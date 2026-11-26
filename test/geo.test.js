@@ -3,7 +3,7 @@ import test from 'node:test';
 import ExcelJS from 'exceljs';
 import { closestSnapshot, mapFeatures, mapWorkbook, parseActix, radioFields } from '../src/geo.js';
 import { makeKml, makeShapefile } from '../src/gis-export.js';
-import { legendImage, toSvg } from '../src/charts.js';
+import { callDropKey, datasets, legendImage, toSvg } from '../src/charts.js';
 import { mapLegendExportEntry, mapLegendFilter, mapPointLegend } from '../src/map-colors.js';
 import { applyMapThresholds } from '../src/map-thresholds.js';
 import { detectedCellOverlay, mapSectors, sectorLegendGroups } from '../src/sector-style.js';
@@ -12,6 +12,21 @@ import { parseWorkbook } from '../src/survey.js';
 const lte = `SiteID,Latitude,Longitude,Sector_ID,DL_EARFCN,PCI,ECI,Cell_Name
 far,-35,153,B,1725,8,987,Far LTE
 near,-32.8,151.6,A,1725,8,123,`;
+
+test('maps only geolocated call drop events with a single event legend', () => {
+  const metric = { key: callDropKey, geoCount: 4, series: [[1, 0], [2, 1], [3, 2], [4, 1]], geoCategories: [[5, 'unknown']] };
+  const location = { coords: [151.61, -32.81], radio: {} };
+  const survey = { filename: 'UE1.xlsx', metrics: [metric], geography: { 1: location, 2: location, 3: location, 5: location } };
+  const noMappedDrop = { ...survey, geography: { 1: location, 3: location, 5: location } };
+  const items = datasets([survey, noMappedDrop], callDropKey, 'map');
+  assert.deepEqual(items.map(({ tag }) => tag), ['S1']);
+  const map = mapFeatures({ key: callDropKey, workbooks: [mapWorkbook(survey, callDropKey, 'S1', '#000000')],
+    snapshots: [], maxDays: 7, legendMode: 'ue' });
+  const { entries } = mapPointLegend(callDropKey, map, items);
+  assert.deepEqual(entries.map(({ label }) => label), ['Drop detected']);
+  assert.deepEqual(map.samples.features.map(({ properties }) => [properties.LOG_ROW, properties.VALUE, properties.COLOR]),
+    [[2, 1, entries[0].color]]);
+});
 
 test('groups and deduplicates sector bands without guessing unmapped frequencies', () => {
   const sectors = [
@@ -236,8 +251,13 @@ test('marks below-threshold readings red without colouring missing or above-rang
     assert.deepEqual(legend.find(entry => entry.label === label), { label, color: '#FF0000' }, key);
     assert.deepEqual(features.map(({ properties }) => properties.COLOR === '#FF0000'), [true, false, false], key);
   }
+  const maximum = { properties: { DEVICE: 'S1', VALUE: 5 } };
   const above = { properties: { DEVICE: 'S1', VALUE: 5.01 } };
-  applyMapThresholds('Speech_MOS_POLQA_Score_DL', [above]);
+  const key = 'Speech_MOS_POLQA_Score_DL';
+  assert.deepEqual(applyMapThresholds(key, [maximum]).map(({ label }) => label), ['4 to 5 MOS', '3 to < 4 MOS', '< 3 MOS']);
+  assert.equal(maximum.properties.KPI_BAND, '4 to 5 MOS');
+  applyMapThresholds(key, [above]);
+  assert.equal(above.properties.KPI_BAND, 'Out-of-range reading');
   assert.equal(above.properties.COLOR, '#717888');
 });
 
@@ -299,16 +319,20 @@ D,-32,151,1500,10,400,Other Network Cell`, 'actix 2026-10-13.csv');
     } });
     const workbooks = [
       device('S1', 'telstra', [[8, null, [151, -32]], [8, 100, [151, -32]], [8, null, [152, -33]], [9, null, [151, -32]]]),
-      device('S2', 'other', [[10, 400, [151, -32]]]),
+      device('S2', 'other', Array.from({ length: 4 }, () => [10, 400, [151, -32]])),
     ];
     const map = mapFeatures({ workbooks, snapshots: [snapshot], key, maxDays: 0 });
     assert.deepEqual(map.categoryLegend.map(({ value, cells }) => [value, cells]), [
+      [10, undefined],
       [8, [{ name: 'Another Cell', exact: false }, { name: 'Exact Cell', exact: true }]],
-      [9, undefined], [10, undefined],
+      [9, undefined],
     ]);
-    const filter = mapLegendFilter(map, mapPointLegend(key, map, []).entries);
-    assert.equal(filter.entries[0].share, '60%');
-    assert.equal(filter.samples(filter.entries[0]).features.length, 3);
+    const legend = mapPointLegend(key, map, []);
+    assert.equal(legend.title, 'Legend');
+    const filter = mapLegendFilter(map, legend.entries);
+    assert.deepEqual(filter.entries.map(({ count }) => count), [4, 3, 1]);
+    assert.equal(filter.entries[0].share, '50%');
+    assert.equal(filter.samples(filter.entries[0]).features.length, 4);
     const withoutActix = mapFeatures({ workbooks, snapshots: [], key, maxDays: 0 });
     assert.ok(withoutActix.categoryLegend.every(entry => !entry.cells));
   }

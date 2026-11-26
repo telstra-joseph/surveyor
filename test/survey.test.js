@@ -2,12 +2,30 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import ExcelJS from 'exceljs';
 import JSZip from 'jszip';
-import { binsPerPage, chart, datasets, groupDatasets, legend, samplePoints, sourceTable, toSvg } from '../src/charts.js';
+import { binsPerPage, callDropKey, chart, datasets, groupDatasets, legend, samplePoints, sourceTable, toSvg } from '../src/charts.js';
 import { makeReport } from '../src/report.js';
 import { mapImage, stackImages } from '../src/image-export.js';
 import { parseWorkbook } from '../src/survey.js';
 import { orderWorkbookBatch } from '../src/workers.js';
 import { applySavedKpiOrder, defaultReportKpiOrder, groupReportFloors } from '../src/report-options.js';
+
+test('call drop sample plots and PowerPoint fallback show only detected events', async () => {
+  const metric = { key: callDropKey, series: [[1, 0], [2, 1], [3, 2]], histogram: [['No drop', 1], ['Drop', 1]] };
+  const noDrops = { ...metric, series: [[1, 0]] };
+  const surveys = [{ filename: 'UE1.xlsx', metrics: [metric] }, { filename: 'UE2.xlsx', metrics: [noDrops] }];
+  const items = datasets(surveys, callDropKey, 'series');
+  assert.deepEqual(items.map(({ data }) => data), [[[2, 1]], []]);
+  assert.equal(chart('Call drops', 'series', items).marks.filter(({ kind }) => kind === 'dot').length, 1);
+  assert.doesNotMatch(toSvg(chart('Call drops', 'series', items.slice(1))), /NaN|Infinity|<circle/);
+  const zip = await JSZip.loadAsync(await makeReport({ location: 'Test site', surveys, keys: [callDropKey] }));
+  const slide = await zip.file('ppt/slides/slide2.xml').async('string');
+  assert.match(slide, /Recorded samples/);
+  assert.equal([...slide.matchAll(/>Drop detected</g)].length, 1);
+  assert.doesNotMatch(slide, /UE2|>No drop</);
+  const noDropSlide = await zip.file('ppt/slides/slide3.xml').async('string');
+  assert.match(noDropSlide, /No call drops detected/);
+  assert.doesNotMatch(noDropSlide, />Drop detected</);
+});
 
 test('groups selected workbooks by plan ID, including a section for unassigned logs', () => {
   const surveys = [{ planId: 'A', planName: 'Level' }, {}, { planId: 'B', planName: 'Level' },
@@ -91,15 +109,15 @@ test('map image exports scaled Actix symbols and faded labels without fading sur
   assert.match(cropped.svg, /<g transform="translate\(27\.875 -8\.75\)".*data:image\/png;base64,points/);
 });
 
-test('PowerPoint prefers a map without a sector legend and retains a chart for a KPI without GPS', async () => {
+test('PowerPoint uses a map or chart independently for each UE and KPI', async () => {
   const deck = await makeReport({
     location: 'Test site', keys: ['LTE_UE_RSRP', 'LTE_UE_SINR'],
     surveys: [{ filename: 'test.xlsx', days: ['2026-10-14', '2026-10-13'], metrics: [
       { key: 'LTE_UE_RSRP', histogram: [['RSRP distribution', 5]] },
       { key: 'LTE_UE_SINR', histogram: [['SINR distribution', 3]] },
-    ] }],
+    ] }, { filename: 'UE2.xlsx', metrics: [{ key: 'LTE_UE_RSRP', series: [[1, -90]] }] }],
     maps: [{
-      key: 'LTE_UE_RSRP', group: 0, width: 1100, height: 530,
+      key: 'LTE_UE_RSRP', workbookIndex: 0, width: 1100, height: 530,
       image: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jFPsAAAAASUVORK5CYII=',
       legend: { title: 'KPI thresholds', entries: [{ label: 'Good coverage', color: '#0D54FF' }] },
       sectors: [{ rat: 'LTE', entries: [{ label: 'F 700 MHz', color: '#00FFFF' }] }],
@@ -116,12 +134,15 @@ test('PowerPoint prefers a map without a sector legend and retains a chart for a
     assert.ok(map.includes(text), text);
   }
   assert.doesNotMatch(map, /Map plot|RSRP distribution|LTE sectors|F 700 MHz/i);
+  assert.match(map, /S1 test/);
+  assert.doesNotMatch(map, /S2 UE2/);
   const chartSlide = await zip.file('ppt/slides/slide3.xml').async('string');
-  assert.match(chartSlide, /SINR distribution/);
+  assert.match(chartSlide, /Recorded samples \| S2 UE2/);
   assert.doesNotMatch(chartSlide, /<p:pic>/);
+  assert.match(await zip.file('ppt/slides/slide4.xml').async('string'), /SINR distribution/);
 });
 
-test('PowerPoint combines workbooks on each floor in the requested section order', async () => {
+test('PowerPoint keeps UE slides separate within the requested floor sections', async () => {
   const surveys = ['second & co.xlsx', 'first.xlsx', 'third.xlsx'].map((filename, i) => ({
     filename, profile: `Device ${i}`, sourceIndex: i, days: [`2026-10-1${i + 3}`], metrics: [
       { key: 'LTE_UE_SINR', series: [[0, i]] },
@@ -134,41 +155,43 @@ test('PowerPoint combines workbooks on each floor in the requested section order
   }));
   const read = name => zip.file(`ppt/${name}.xml`).async('string');
   const deck = await read('presentation');
-  assert.deepEqual([...deck.matchAll(/<p14:section name="([^"]+)"[^>]*><p14:sldIdLst><p14:sldId id="(\d+)"\/><\/p14:sldIdLst>/g)]
-    .map(match => match.slice(1)), [['Cover', '256'], ['1. Upper &amp; east', '257'], ['2. Lower', '258']]);
+  assert.deepEqual([...deck.matchAll(/<p14:section name="([^"]+)"[^>]*><p14:sldIdLst>(.*?)<\/p14:sldIdLst>/g)]
+    .map(([, name, slides]) => [name, [...slides.matchAll(/id="(\d+)"/g)].map(match => match[1])]),
+  [['Title', ['256']], ['Upper &amp; east', ['257']], ['Lower', ['258', '259']]]);
   assert.match(await read('slides/slide2'), /SINR.*Upper &amp; east/s);
   assert.match(await read('slides/slide3'), /SINR.*Lower/s);
   assert.match(await read('slides/slide2'), /<a:t>S2<\/a:t>/);
   assert.match(await read('slides/slide3'), /<a:t>S1<\/a:t>/);
-  assert.match(await read('slides/slide3'), /<a:t>S3<\/a:t>/);
-  assert.equal(zip.file('ppt/slides/slide4.xml'), null);
+  assert.doesNotMatch(await read('slides/slide3'), /<a:t>S3<\/a:t>/);
+  assert.match(await read('slides/slide4'), /<a:t>S3<\/a:t>/);
+  assert.equal(zip.file('ppt/slides/slide5.xml'), null);
 });
 
-test('PowerPoint inserts custom floor dividers before their KPI slides and inside each section', async () => {
+test('PowerPoint keeps custom floor dividers and KPI slides in distinct sections with the same name', async () => {
   const key = 'LTE_UE_SINR';
   const zip = await JSZip.loadAsync(await makeReport({
     location: 'Test site', keys: [key],
     surveys: ['second.xlsx', 'first.xlsx'].map(filename => ({ filename, metrics: [{ key, series: [[0, 1]] }] })),
     sections: [{ title: 'Level 1', workbookIndexes: [0], dividerTitle: 'Lobby & entrance' },
-      { title: 'Level 2', workbookIndexes: [1], dividerTitle: 'Upper floor' }],
+      { title: 'Level 1', workbookIndexes: [1], dividerTitle: 'Upper floor' }],
   }));
   const slide = n => zip.file(`ppt/slides/slide${n}.xml`).async('string');
   assert.match(await slide(2), /<a:t>Lobby &amp; entrance<\/a:t>/);
   assert.match(await slide(3), /SINR.*Level 1.*Page 3/s);
   assert.match(await slide(4), /<a:t>Upper floor<\/a:t>/);
-  assert.match(await slide(5), /SINR.*Level 2.*Page 5/s);
+  assert.match(await slide(5), /SINR.*Level 1.*Page 5/s);
   const deck = await zip.file('ppt/presentation.xml').async('string');
-  assert.match(deck, /name="1\. Level 1"[^>]*><p14:sldIdLst><p14:sldId id="257"\/><p14:sldId id="258"\/>/);
-  assert.match(deck, /name="2\. Level 2"[^>]*><p14:sldIdLst><p14:sldId id="259"\/><p14:sldId id="260"\/>/);
+  assert.match(deck, /name="Level 1"[^>]*><p14:sldIdLst><p14:sldId id="257"\/><p14:sldId id="258"\/>/);
+  assert.match(deck, /name="Level 1"[^>]*><p14:sldIdLst><p14:sldId id="259"\/><p14:sldId id="260"\/>/);
   assert.equal(zip.file('ppt/slides/slide6.xml'), null);
 });
 
 test('PowerPoint centres a tightly cropped floor plan in the map area without online basemap text', async () => {
   const key = 'LTE_UE_RSRP';
   const zip = await JSZip.loadAsync(await makeReport({
-    location: 'Test site', keys: [key], surveys: [{ days: ['2026-10-13'], metrics: [] }],
+    location: 'Test site', keys: [key], surveys: [{ filename: 'UE1.xlsx', days: ['2026-10-13'], metrics: [] }],
     maps: [{
-      key, group: 0, plan: 'Level 2', width: 400, height: 600,
+      key, workbookIndex: 0, plan: 'Level 2', width: 400, height: 600,
       image: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jFPsAAAAASUVORK5CYII=',
       legend: { title: 'KPI thresholds', entries: [] }, attribution: 'OpenStreetMap contributors',
     }],
@@ -189,17 +212,17 @@ test('PowerPoint map legends show matched PCI names and downlink frequencies', a
   const entry = (value, cells) => ({ value, label: String(value), color: '#0D54FF', cells });
   const cases = [
     ['Technology_Mode', [entry('LTE')], ['Legend', 'LTE']],
-    ['LTE_UE_PCI', [entry(172, [{ name: 'SITEBM4', exact: true }]), entry(173)], ['172 — SITEBM4', '173']],
-    ['NR_UE_PCI_0', [entry(85, [{ name: 'SITEVM1', exact: false }])], ['85 — SITEVM1 (candidate)']],
+    ['LTE_UE_PCI', [entry(172, [{ name: 'SITEBM4', exact: true }]), entry(173)], ['Legend', '172 — SITEBM4', '173']],
+    ['NR_UE_PCI_0', [entry(85, [{ name: 'SITEVM1', exact: false }])], ['Legend', '85 — SITEVM1 (candidate)']],
     ['LTE_UE_EARFCN_DL', [entry(1725), entry(9410), entry(5000)],
       ['LTE EARFCN', 'Channel number', '1725 — 1857.5 MHz', '9410 — 778 MHz', '5000 — frequency unavailable']],
     ['NR_UE_NR_ARFCN_DL_0', [entry(173000), entry(650000), entry(2016667)],
       ['NR-ARFCN', 'Channel number', '173000 — 865 MHz', '650000 — 3750 MHz', '2016667 — 24250.08 MHz']],
   ];
   const deck = await makeReport({
-    location: 'Test site', keys: cases.map(([key]) => key), surveys: [],
+    location: 'Test site', keys: cases.map(([key]) => key), surveys: [{ filename: 'UE1.xlsx', metrics: [] }],
     maps: cases.map(([key, entries]) => ({
-      key, group: 0, width: 1100, height: 530,
+      key, workbookIndex: 0, width: 1100, height: 530,
       image: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jFPsAAAAASUVORK5CYII=',
       legend: { title: key === 'Technology_Mode' ? 'Technology mode legend' : 'Original heading', entries },
     })),
@@ -208,7 +231,7 @@ test('PowerPoint map legends show matched PCI names and downlink frequencies', a
   for (const [index, [, , expected]] of cases.entries()) {
     const slide = await zip.file(`ppt/slides/slide${index + 2}.xml`).async('string');
     for (const text of expected) assert.ok(slide.includes(`<a:t>${text}</a:t>`), text);
-    assert.doesNotMatch(slide, /Technology mode legend|downlink (?:EARFCN|ARFCN)/);
+    assert.doesNotMatch(slide, /Original heading|Technology mode legend|downlink (?:EARFCN|ARFCN)/);
   }
 });
 
@@ -221,9 +244,9 @@ test('PowerPoint map legends preserve SINR counts, colours and circular swatches
     { label: '≥ 10.00 (1) 20%', color: '#008000', shape: 'circle' },
   ];
   const deck = await makeReport({
-    location: 'Test site', keys: ['LTE_UE_SINR'], surveys: [],
+    location: 'Test site', keys: ['LTE_UE_SINR'], surveys: [{ filename: 'UE1.xlsx', metrics: [] }],
     maps: [{
-      key: 'LTE_UE_SINR', group: 0, width: 1100, height: 530,
+      key: 'LTE_UE_SINR', workbookIndex: 0, width: 1100, height: 530,
       image: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jFPsAAAAASUVORK5CYII=',
       legend: { title: 'KPI thresholds', entries }, sectors: [],
     }],
@@ -235,23 +258,34 @@ test('PowerPoint map legends preserve SINR counts, colours and circular swatches
   assert.match(slide, /≥ 10\.00 \(1\) 20%/);
 });
 
-test('PowerPoint continues a dense PCI legend at readable size without dropping its values', async () => {
+test('PowerPoint fits 32 PCI entries in two columns before continuing a dense legend', async () => {
   const entries = Array.from({ length: 72 }, (_, index) => ({ label: `PCI ${100 + index}`, color: '#D24C11' }));
   const deck = await makeReport({
-    location: 'Test site', keys: ['LTE_UE_PCI'], surveys: [],
+    location: 'Test site', keys: ['LTE_UE_PCI'],
+    surveys: [{ filename: 'UE1.xlsx', metrics: [] }, { filename: 'UE2.xlsx', metrics: [] }],
     maps: [{
-      key: 'LTE_UE_PCI', group: 0, width: 1100, height: 530,
+      key: 'LTE_UE_PCI', workbookIndex: 0, width: 1100, height: 530,
       image: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jFPsAAAAASUVORK5CYII=',
       legend: { title: 'LTE PCI legend', entries }, sectors: [],
+    }, {
+      key: 'LTE_UE_PCI', workbookIndex: 1, width: 1100, height: 530,
+      image: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jFPsAAAAASUVORK5CYII=',
+      legend: { title: 'Legend', entries: entries.slice(0, 32) },
     }],
   });
   const zip = await JSZip.loadAsync(deck);
   const slides = await Promise.all([2, 3, 4].map(number => zip.file(`ppt/slides/slide${number}.xml`).async('string')));
   assert.match(slides[0], /<p:pic>/);
-  assert.match(slides[0], /\+56 values on following slides/);
-  assert.doesNotMatch(slides.slice(1).join(''), /<p:pic>/);
-  assert.match(slides[2], /srgbClr val="D24C11"/);
-  assert.deepEqual([...slides.join('').matchAll(/<a:t>(PCI \d+)<\/a:t>/g)].map(match => match[1]), entries.map(entry => entry.label));
+  assert.match(slides[0], /S1 UE1/);
+  assert.match(slides[2], /S2 UE2/);
+  assert.match(slides[0], /\+40 values on following slides/);
+  assert.doesNotMatch(slides[1], /<p:pic>/);
+  assert.match(slides[1], /srgbClr val="D24C11"/);
+  const labels = xml => [...xml.matchAll(/<a:t>(PCI \d+)<\/a:t>/g)].map(match => match[1]);
+  const columns = [...slides[2].matchAll(/<a:tbl>.*?<\/a:tbl>/gs)].map(match => labels(match[0]));
+  assert.deepEqual(columns, [entries.slice(0, 16).map(entry => entry.label), entries.slice(16, 32).map(entry => entry.label)]);
+  assert.deepEqual(labels(slides[0] + slides[1]), entries.map(entry => entry.label));
+  assert.equal(zip.file('ppt/slides/slide5.xml'), null);
 });
 
 test('reads shuffled sheets, sparse series, zero counts and positional summary pairs', async () => {
@@ -333,7 +367,7 @@ test('combines the current plot page and its legend in one SVG image', () => {
   assert.doesNotMatch(combined, /Range 0/);
 });
 
-test('keeps later workbooks in comparison groups and gives each group a report slide', async () => {
+test('keeps later workbooks in comparison groups on screen and gives each UE its own report slide', async () => {
   const key = 'LTE_UE_RSRP';
   const surveys = Array.from({ length: 10 }, (_, index) => ({
     filename: `sample-${index + 1}.xlsx`,
@@ -343,7 +377,11 @@ test('keeps later workbooks in comparison groups and gives each group a report s
   assert.deepEqual(groups.map(items => items.map(item => item.tag)), [
     ['S1', 'S3', 'S4', 'S5', 'S6', 'S7', 'S8'], ['S9', 'S10'],
   ]);
-  const buffer = Buffer.from(await makeReport({ location: 'Test location', surveys, keys: [key] }));
-  assert.ok(buffer.includes('ppt/slides/slide3.xml'));
-  assert.ok(!buffer.includes('ppt/slides/slide4.xml'));
+  const zip = await JSZip.loadAsync(await makeReport({ location: 'Test location', surveys, keys: [key] }));
+  for (const [index, item] of groups.flat().entries()) {
+    const slide = await zip.file(`ppt/slides/slide${index + 2}.xml`).async('string');
+    assert.deepEqual([...new Set([...slide.matchAll(/<a:t>(S\d+)<\/a:t>/g)].map(match => match[1]))], [item.tag]);
+    assert.ok(slide.includes(`${item.tag} ${item.name}`));
+  }
+  assert.equal(zip.file('ppt/slides/slide11.xml'), null);
 });

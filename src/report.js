@@ -1,5 +1,5 @@
 import PptxGenJS from 'pptxgenjs';
-import { binsPerPage, chart, datasets, groupDatasets, modes, sourceTable, theme } from './charts.js';
+import { binsPerPage, callDropKey, chart, datasets, deviceName, dropSeriesLegend, isPciKpi, modes, sourceTable, theme } from './charts.js';
 import { reportMapLegend, reportMetricName } from './report-labels.js';
 
 const hex = color => color.slice(1);
@@ -26,7 +26,7 @@ export async function makeReport({ location, surveys, keys, maps = [], sections 
   const shape = (slide, type, color, options) => slide.addShape(deck.ShapeType[type], {
     fill: { color: hex(color) }, line: { transparency: 100 }, ...options,
   });
-  let sectionTitle = sections ? 'Cover' : undefined;
+  let sectionTitle = sections ? 'Title' : undefined;
   if (sectionTitle) deck.addSection({ title: sectionTitle });
   const cover = deck.addSlide({ sectionTitle });
   cover.background = { color: hex(theme.cream) };
@@ -58,9 +58,10 @@ export async function makeReport({ location, surveys, keys, maps = [], sections 
     return slide;
   };
 
-  const addGroupPages = (title, mode, items, groupLabel) => {
+  const addGroupPages = (title, mode, items, groupLabel, dropSeries) => {
     const rows = mode === 'series' ? [] : sourceTable(items);
     const pages = Math.max(1, Math.ceil(rows.length / binsPerPage));
+    const entries = dropSeries ? dropSeriesLegend(items) : items;
     for (let page = 0; page < pages; page++) {
       const subtitle = `${modes[mode]}${groupLabel}${pages > 1 ? ` | ${page + 1} of ${pages}` : ''}`;
       const slide = addPage(title, subtitle);
@@ -84,17 +85,20 @@ export async function makeReport({ location, surveys, keys, maps = [], sections 
             shape(slide, mark.kind === 'dot' ? 'ellipse' : 'rect', mark.color, { x, y, w: mark.w * scale, h: mark.h * scale });
           }
         }
-        addText(slide, mode === 'histogram'
+        addText(slide, dropSeries
+          ? entries.length ? 'Each dot marks a detected call drop.' : 'No call drops detected in this workbook group.'
+          : mode === 'histogram'
           ? 'Workbook counts: a missing bin is not a reported zero.'
           : 'Each dot represents a recorded value. Workbook rows are not aligned in time.', {
           x: .5, y: 5.74, w: 9, h: .28, fontSize: 11,
         });
       }
+      if (!entries.length) continue;
       addText(slide, 'Legend', { x: 10.0, y: 1.72, w: 2.7, h: .35, fontFace: theme.display, fontSize: 16 });
-      slide.addTable(items.map(({ tag, name, color }) => [
-        { text: '', options: { fill: { color: hex(color) } } }, tag, name,
+      slide.addTable(entries.map(({ tag, name, color, label }) => [
+        { text: '', options: { fill: { color: hex(color) } } }, ...(dropSeries ? [label] : [tag, name]),
       ]), {
-        x: 10.0, y: 2.17, colW: [.2, .6, 2.0], rowH: .35, margin: .06,
+        x: 10.0, y: 2.17, colW: dropSeries ? [.2, 2.6] : [.2, .6, 2.0], rowH: .35, margin: .06,
         fontFace: theme.font, fontSize: 10, color: hex(theme.ink),
         fill: { color: hex(theme.cream) }, border: { color: hex(theme.paper), pt: .6 }, autoPage: false,
       });
@@ -104,7 +108,12 @@ export async function makeReport({ location, surveys, keys, maps = [], sections 
   const addMapPage = (title, map, groupLabel) => {
     const subtitle = groupLabel.replace(/^ \| /, '');
     const slide = addPage(title, subtitle);
-    const area = { x: .54, y: subtitle ? 1.48 : 1.2, w: 9.5 };
+    const { title: legendTitle, entries } = reportMapLegend(map.key, map.legend);
+    const rowsPerMapColumn = 16, legendColumnWidth = 2.58, columnGap = .12;
+    const twoColumns = isPciKpi(map.key) && entries.length > rowsPerMapColumn;
+    const legendWidth = twoColumns ? 2 * legendColumnWidth + columnGap : legendColumnWidth;
+    const legendX = 12.78 - legendWidth;
+    const area = { x: .54, y: subtitle ? 1.48 : 1.2, w: legendX - .70 };
     area.h = 6.84 - area.y;
     const scale = Math.min(area.w / map.width, area.h / map.height);
     const w = map.width * scale, h = map.height * scale;
@@ -122,12 +131,12 @@ export async function makeReport({ location, surveys, keys, maps = [], sections 
         if (swatchShape === 'circle') shape(page, 'ellipse', color, { x: x + .03, y: y + index * .25 + .055, w: .14, h: .14 });
       });
     };
-    const { title: legendTitle, entries } = reportMapLegend(map.key, map.legend);
-    const onMap = 16, perColumn = 18, perSlide = perColumn * 3;
-    addText(slide, legendTitle, { x: 10.2, y: 1.49, w: 2.58, h: .35, fontFace: theme.display, fontSize: 16, fit: 'shrink' });
-    if (entries.length) addLegendTable(slide, entries.slice(0, onMap), 10.2, 1.89, 2.58);
+    const onMap = rowsPerMapColumn * (twoColumns ? 2 : 1), perColumn = 18, perSlide = perColumn * 3;
+    addText(slide, legendTitle, { x: legendX, y: 1.49, w: legendWidth, h: .35, fontFace: theme.display, fontSize: 16, fit: 'shrink' });
+    if (entries.length) addLegendTable(slide, entries.slice(0, rowsPerMapColumn), legendX, 1.89, legendColumnWidth);
+    if (twoColumns) addLegendTable(slide, entries.slice(rowsPerMapColumn, onMap), legendX + legendColumnWidth + columnGap, 1.89, legendColumnWidth);
     if (entries.length > onMap) addText(slide, `+${entries.length - onMap} values on following slides`, {
-      x: 10.2, y: 6.13, w: 2.58, h: .2, fontSize: 9,
+      x: legendX, y: 6.13, w: legendWidth, h: .2, fontSize: 9,
     });
     if (!map.plan && map.attribution) {
       const creditWidth = Math.min(w - .1, Math.max(1.5, map.attribution.length * .047));
@@ -145,45 +154,43 @@ export async function makeReport({ location, surveys, keys, maps = [], sections 
     }
   };
 
-  const addKpiPages = (key, workbooks, kpiMaps, sectionLabel = '') => {
+  const addKpiPages = (key, workbookIndexes, sectionLabel = '') => {
     const title = reportMetricName(key);
-    const byGroup = new Map();
-    for (const map of kpiMaps) {
-      if (!byGroup.has(map.group)) byGroup.set(map.group, []);
-      byGroup.get(map.group).push(map);
+    const mapsByWorkbook = new Map(maps.filter(map => map.key === key).map(map => [map.workbookIndex, map]));
+    const workbooks = workbookIndexes.map(index => surveys[index]);
+    const chartsByWorkbook = new Map();
+    for (const mode of key === callDropKey ? ['series', 'histogram', 'statistics'] : ['histogram', 'series', 'statistics']) {
+      for (const item of datasets(workbooks, key, mode)) {
+        if (!chartsByWorkbook.has(item.index)) chartsByWorkbook.set(item.index, { mode, item });
+      }
     }
-    let chartMode;
-    let chartGroups = [];
-    for (const mode of ['histogram', 'series', 'statistics']) {
-      const groups = groupDatasets(datasets(workbooks, key, mode));
-      if (!groups.length) continue;
-      chartMode = mode;
-      chartGroups = groups;
-      break;
-    }
-    const chartsByGroup = new Map(chartGroups.map(items => [items[0].group, items]));
-    const groups = [...new Set([...byGroup.keys(), ...chartsByGroup.keys()])].sort((a, b) => a - b);
-    groups.forEach((group, index) => {
-      const label = sectionLabel + (groups.length > 1 ? ` | Workbook group ${index + 1} of ${groups.length}` : '');
-      const groupMaps = byGroup.get(group);
-      if (groupMaps) for (const map of groupMaps) addMapPage(title, map, map.plan && !sectionLabel ? `${label} | Floor plan: ${map.plan}` : label);
-      else addGroupPages(title, chartMode, chartsByGroup.get(group), label);
+    workbookIndexes.forEach((workbookIndex, index) => {
+      const workbook = workbooks[index];
+      const label = ` | S${(workbook.sourceIndex ?? workbookIndex) + 1} ${deviceName(workbook)}${sectionLabel}`;
+      const map = mapsByWorkbook.get(workbookIndex);
+      if (map) addMapPage(title, map, map.plan && !sectionLabel ? `${label} | Floor plan: ${map.plan}` : label);
+      else {
+        const chart = chartsByWorkbook.get(index);
+        if (chart) addGroupPages(title, chart.mode, [chart.item], label, key === callDropKey && chart.mode === 'series');
+      }
     });
   };
   if (sections) {
     for (const [index, { title, workbookIndexes, dividerTitle }] of sections.entries()) {
+      // PptxGenJS assigns slides by title, so keep names unique until all slides are assigned.
       sectionTitle = `${index + 1}. ${title}`;
       deck.addSection({ title: sectionTitle });
       if (dividerTitle) addDivider(dividerTitle);
-      const workbooks = workbookIndexes.map(i => surveys[i]);
       const before = slideNumber;
       for (const key of keys) {
-        addKpiPages(key, workbooks, maps.filter(map => map.key === key && map.sectionIndex === index), ` | ${title}`);
+        addKpiPages(key, workbookIndexes, ` | ${title}`);
       }
       if (slideNumber === before) addPage(title, 'No data for the selected KPIs');
     }
+    sections.forEach(({ title }, index) => { deck.sections[index + 1].title = title; });
   } else {
-    for (const key of keys) addKpiPages(key, surveys, maps.filter(map => map.key === key));
+    const workbookIndexes = surveys.map((_, index) => index);
+    for (const key of keys) addKpiPages(key, workbookIndexes);
   }
   return deck.write({ outputType: 'arraybuffer', compression: true });
 }

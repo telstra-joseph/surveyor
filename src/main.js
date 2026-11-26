@@ -1,5 +1,5 @@
 import './style.css';
-import { binsPerPage, chart, datasets, deviceName, escapeMarkup, format, groupDatasets, legend, legendImage, markLimit, metricName, modes, sourceTable, toSvg } from './charts.js';
+import { binsPerPage, callDropKey, chart, datasets, deviceName, dropSeriesLegend, escapeMarkup, format, groupDatasets, hasMappedSamples, legend, legendImage, markLimit, metricName, modes, sourceTable, toSvg } from './charts.js';
 import { mapLegendEntryLabel, mapLegendExportEntry, mapLegendFilter, mapPointLegend } from './map-colors.js';
 import { importFiles, orderWorkbookBatch, workerRequest } from './workers.js';
 import { cellDescription, createMapView } from './map-view.js';
@@ -326,7 +326,7 @@ function renderChart(preserveSelection = false) {
   const fullRows = mode === 'series' || isMap ? [] : sourceTable(items);
   const perPage = mode === 'series' ? 100 : binsPerPage;
   const total = isMap ? 1 : mode === 'series' ? items.reduce((count, item) => count + item.data.length, 0) : fullRows.length;
-  const pages = Math.ceil(total / perPage);
+  const pages = Math.max(1, Math.ceil(total / perPage));
   page = Math.min(page, pages - 1);
   const start = page * perPage;
   const rows = mode === 'series' ? [] : fullRows.slice(start, start + perPage);
@@ -347,7 +347,10 @@ function renderChart(preserveSelection = false) {
   active = { key, title, mode, items, rows, plot, pages, groupSuffix };
   $('chart-title').textContent = `${title} — ${modes[mode]}`;
   const missing = surveys.length - allItems.length;
-  const interpretation = mode === 'histogram'
+  const dropSeries = key === callDropKey && mode === 'series';
+  const interpretation = dropSeries
+    ? total ? 'Each point marks a detected call drop. Workbook row positions are not time-aligned.' : 'No call drops detected in this workbook group.'
+    : mode === 'histogram'
     ? 'Counts and ranges come from the workbooks. An omitted bin is not a reported zero.'
     : mode === 'series'
       ? `Workbook row positions are not time-aligned. For dense traces, the plot keeps up to ${markLimit} points per device; the source table retains every numeric reading.`
@@ -361,6 +364,7 @@ function renderChart(preserveSelection = false) {
   if (!isMap) setMapImageActions(false);
   updateImageLabels();
   if (isMap) renderLegend('Legend', []);
+  else if (dropSeries) renderLegend('Legend', dropSeriesLegend(items));
   else renderLegend('Legend', items.map(({ tag, name, color }) => ({ label: `${tag} ${name}`, color })));
   renderPagination();
   $('map-panel').hidden = !isMap;
@@ -457,8 +461,11 @@ async function renderMap(preserveSelection = false) {
     active.siteOverlay = siteOverlay();
     renderSectorLegend();
     const { title, entries, showCounts } = mapPointLegend(active.key, map, active.items);
-    active.legendFilter = mapLegendFilter(map, entries);
-    renderLegend(title, active.legendFilter.entries, active.legendFilter, showCounts);
+    if (active.key === callDropKey) renderLegend(title, entries);
+    else {
+      active.legendFilter = mapLegendFilter(map, entries);
+      renderLegend(title, active.legendFilter.entries, active.legendFilter, showCounts);
+    }
     active.pages = Math.max(1, Math.ceil(map.samples.features.length / 100));
     const { plotted, sitesPlotted } = mapView.render({ ...map, ...active.siteOverlay },
       $('show-sites').checked, preserveSelection);
@@ -508,9 +515,11 @@ function renderGroups(preserveSelection = false) {
 }
 
 function renderModes(preferred, preserveSelection = false) {
-  const available = Object.keys(modes).filter(mode => datasets(viewSurveys(), $('metric').value, mode).length);
+  const key = $('metric').value, views = viewSurveys();
+  const available = Object.keys(modes).filter(mode => datasets(views, key, mode).length);
   $('mode').replaceChildren(...available.map(mode => new Option(modes[mode], mode)));
   if (available.includes(preferred)) $('mode').value = preferred;
+  else if (key === callDropKey && available.includes('series')) $('mode').value = 'series';
   renderGroups(preserveSelection && $('mode').value === 'map');
 }
 
@@ -603,7 +612,8 @@ function renderSurvey(preferMap = true, rebuildSources = true) {
   if (keys.includes(previous)) $('metric').value = previous;
   else if (keys.includes('LTE_UE_RSRP')) $('metric').value = 'LTE_UE_RSRP';
   if (keys.length && preferMap) {
-    const mappable = new Set(viewSurveys().flatMap(({ metrics }) => metrics.filter(metric => metric.geoCount > 0).map(metric => metric.key)));
+    const mappable = new Set(viewSurveys().flatMap(survey =>
+      survey.metrics.filter(metric => hasMappedSamples(survey, metric)).map(metric => metric.key)));
     if (mappable.size && !mappable.has($('metric').value)) $('metric').value = mappable.values().next().value;
     renderModes(mappable.size ? 'map' : $('mode').value);
   } else if (keys.length) {
@@ -706,7 +716,8 @@ async function exportImage(kind) {
     let svg;
     if (kind === 'plot') svg = currentPlotImage().svg;
     else {
-      const key = asImage(active.mode === 'map' ? legendImage(active.legend.title, active.legend.entries) : legend(active.title, active.items));
+      const usePointLegend = active.mode === 'map' || (active.key === callDropKey && active.mode === 'series');
+      const key = asImage(usePointLegend ? legendImage(active.legend.title, active.legend.entries) : legend(active.title, active.items));
       const legends = [key, ...sectorLegend().map(({ rat, entries }) => asImage(legendImage(`Actix sector legend — ${rat}`, entries)))];
       svg = kind === 'both' ? stackImages(`${active.title} — plot and legend`, currentPlotImage(), ...legends)
         : legends.length > 1 ? stackImages(`${active.title} — legends`, ...legends) : key.svg;

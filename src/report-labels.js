@@ -1,4 +1,4 @@
-import { metricName, technologyModeKey } from './charts.js';
+import { isPciKpi, metricName, technologyModeKey } from './charts.js';
 
 const lteKey = 'LTE_UE_EARFCN_DL';
 const nrKey = 'NR_UE_NR_ARFCN_DL_0';
@@ -56,8 +56,8 @@ export function reportMapLegend(key, legend) {
       return { ...entry, label: `${entry.label} — ${mhz === undefined ? 'frequency unavailable' : `${formatFrequency(mhz)} MHz`}` };
     }),
   };
-  if (key === 'LTE_UE_PCI' || key === 'NR_UE_PCI_0') return {
-    ...legend,
+  if (isPciKpi(key)) return {
+    title: 'Legend',
     entries: legend.entries.map(entry => {
       const names = (entry.cells || []).map(({ name, exact }) => exact ? name : `${name} (candidate)`);
       return names.length ? { ...entry, label: `${entry.label} — ${names.join(', ')}` } : entry;

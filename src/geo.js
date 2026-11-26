@@ -1,5 +1,5 @@
 import Papa from 'papaparse';
-import { technologyModeKey } from './charts.js';
+import { callDropKey, dropLegendEntry, isDropDetected, technologyModeKey } from './charts.js';
 import { colorMapCategories, colorMapValues, isIdentifierKpi } from './map-colors.js';
 import { applyMapThresholds, supportsMapThresholds } from './map-thresholds.js';
 import { carrierCode, sectorKey } from './sector-style.js';
@@ -179,7 +179,9 @@ export function mapFeatures({ workbooks, snapshots, key, maxDays, legendMode = '
   const features = [];
   const pciRat = Object.keys(radioFields).find(rat => radioFields[rat][1] === key);
   const pciNames = new Map();
+  const pciCounts = new Map();
   const isTechnologyMode = key === technologyModeKey;
+  const isCallDrop = key === callDropKey;
   let min = Infinity, max = -Infinity;
   for (const { survey, tag, color } of workbooks) {
     const metric = survey.metrics.find(item => item.key === key);
@@ -191,13 +193,15 @@ export function mapFeatures({ workbooks, snapshots, key, maxDays, legendMode = '
       }
     }
     for (const points of isTechnologyMode ? [categories] : [metric.series, categories]) for (const [row, value] of points) {
+      if (isCallDrop && !isDropDetected(value)) continue;
       const location = survey.geography[row];
       if (!location?.coords) continue;
       const { coords, day, radio } = location;
       if (typeof value === 'number') { min = Math.min(min, value); max = Math.max(max, value); }
       const props = { KIND: 'KPI sample', KPI: key, VALUE: typeof value === 'number' ? value : null,
         CATEGORY: typeof value === 'string' ? value : '', WORKBOOK: survey.filename, DEVICE: tag, LOG_ROW: row, SURVEYDAY: day,
-        COLOR: color, NETWORK: survey.network === 'telstra' ? 'Telstra' : survey.network === 'other' ? 'Non-Telstra evidence' : 'Telstra (assumed)' };
+        COLOR: isCallDrop ? dropLegendEntry.color : color,
+        NETWORK: survey.network === 'telstra' ? 'Telstra' : survey.network === 'other' ? 'Non-Telstra evidence' : 'Telstra (assumed)' };
       const sample = { type: 'Feature', geometry: { type: 'Point', coordinates: coords }, properties: props };
       for (const [rat, prefix] of [['LTE', 'L'], ['NR', 'N']]) {
         const values = radio[rat];
@@ -257,11 +261,14 @@ export function mapFeatures({ workbooks, snapshots, key, maxDays, legendMode = '
         }
       }
       features.push(sample);
+      if (pciRat) pciCounts.set(value, (pciCounts.get(value) || 0) + 1);
     }
   }
   const extent = Number.isFinite(min) ? [min, max] : null;
-  const categorical = isTechnologyMode || isIdentifierKpi(key) || !extent;
-  const categoryLegend = categorical ? colorMapCategories(features) : [];
+  const categorical = isTechnologyMode || isCallDrop || isIdentifierKpi(key) || !extent;
+  const categoryLegend = isCallDrop ? (features.length ? [{ ...dropLegendEntry }] : [])
+    : categorical ? colorMapCategories(features) : [];
+  if (pciRat) categoryLegend.sort((a, b) => pciCounts.get(b.value) - pciCounts.get(a.value));
   for (const entry of categoryLegend) {
     const names = pciNames.get(entry.value);
     if (names) entry.cells = [...names].sort(([a], [b]) => a.localeCompare(b))

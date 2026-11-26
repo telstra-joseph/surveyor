@@ -1,4 +1,4 @@
-import { format, metricName, technologyModeKey } from './charts.js';
+import { format, isPciKpi, metricName, technologyModeKey } from './charts.js';
 import { isSinrKpi } from './map-thresholds.js';
 
 const palette = [
@@ -107,6 +107,7 @@ export function colorMapValues(features, [min, max]) {
 }
 
 export function mapPointLegend(key, map, items) {
+  if (isPciKpi(key)) return { title: 'Legend', entries: map.categoryLegend };
   if (map.categoryLegend.length) return { title: `${metricName(key)} legend`, entries: map.categoryLegend };
   if (map.thresholdLegend.length) return { title: 'KPI thresholds', entries: map.thresholdLegend, showCounts: isSinrKpi(key) };
   if (map.valueLegend.length) return { title: 'KPI value', entries: map.valueLegend };

@@ -22,12 +22,11 @@ const sinrBands = profile([-5, 0, 5, 10], [], [
 const profiles = new Map([
   ['LTE_UE_RSRP', rsrpCoverage],
   ['NR_UE_RSRP_0', rsrpCoverage],
-  ['Speech_MOS_POLQA_Score_DL', profile([3, 4, 5], [2], [
+  ['Speech_MOS_POLQA_Score_DL', { ...profile([3, 4], [], [
     [2, '4 to 5 MOS', '#0000FF'],
     [1, '3 to < 4 MOS', '#93FF00'],
     [0, '< 3 MOS', belowThreshold],
-    [3, '> 5 MOS (outside reference range)', neutral],
-  ], 'MOS')],
+  ], 'MOS'), max: 5 }],
   // Nemo supplies throughput in kbps; the reference bands are labeled in Mbps.
   ['App_Throughput_DL', profile([10_000, 20_000, 50_000], [1, 2], [
     [3, '> 50 Mbps', '#008000'],
@@ -48,9 +47,10 @@ export const isSinrKpi = key => /(?:^|[^a-z0-9])SINR(?:[^a-z0-9]|$)/i.test(key);
 export const thresholdProfile = key => isSinrKpi(key) ? sinrBands : profiles.get(key);
 export const supportsMapThresholds = key => Boolean(thresholdProfile(key));
 
-export function thresholdRange({ cuts, upperInclusive, unit }, interval) {
+export function thresholdRange({ cuts, upperInclusive, unit, max }, interval) {
   const lower = interval ? `${upperInclusive.includes(interval - 1) ? '>' : '≥'} ${cuts[interval - 1]}` : '';
-  const upper = interval < cuts.length ? `${upperInclusive.includes(interval) ? '≤' : '<'} ${cuts[interval]}` : '';
+  const upper = interval < cuts.length ? `${upperInclusive.includes(interval) ? '≤' : '<'} ${cuts[interval]}`
+    : max === undefined ? '' : `≤ ${max}`;
   return `${[lower, upper].filter(Boolean).join(' to ')} ${unit}`;
 }
 
@@ -60,10 +60,16 @@ export function validateThresholds(key, { cuts, bands }) {
       cuts.some((n, i) => !Number.isFinite(n) || (i > 0 && n <= cuts[i - 1]))) {
     return 'Enter a number for each cutoff, in strictly increasing order.';
   }
+  if (original.max !== undefined && cuts.at(-1) > original.max) {
+    return `Cutoffs must not exceed ${original.max} ${original.unit}.`;
+  }
   if (bands.length !== original.bands.length || bands.some(({ label, color }) => !label.trim() || !/^#[\da-f]{6}$/i.test(color))) {
     return 'Enter a label and a valid colour for every band.';
   }
   const labels = reportBands(original, { cuts, bands }).map(({ label }) => label.toLowerCase());
+  if (original.max !== undefined && labels.includes('out-of-range reading')) {
+    return 'Use a different label than “Out-of-range reading”.';
+  }
   if (labels.includes('non-numeric reading') || new Set(labels).size !== labels.length) {
     return 'Use a different label for each band (other than “Non-numeric reading”).';
   }
@@ -93,12 +99,14 @@ export function applyMapThresholds(key, features, { multipleDevices = false, ove
   const bands = override ? reportBands(original, override) : original.bands;
   const legend = bands.map(({ label, color }) => ({ label, color }));
   const unclassified = { label: 'Non-numeric reading', color: neutral };
+  const outOfRange = { label: 'Out-of-range reading', color: neutral };
   for (const { properties } of features) {
     const value = properties.VALUE;
     const firstUpper = cuts.findIndex((cut, i) => value < cut || (value === cut && original.upperInclusive.includes(i)));
-    const match = Number.isFinite(value) && bands.find(({ interval }) => interval === (firstUpper < 0 ? cuts.length : firstUpper));
-    const { label, color } = match || unclassified;
-    if (!match && legend.at(-1) !== unclassified) legend.push(unclassified);
+    const entry = !Number.isFinite(value) ? unclassified : original.max !== undefined && value > original.max ? outOfRange
+      : bands.find(({ interval }) => interval === (firstUpper < 0 ? cuts.length : firstUpper));
+    const { label, color } = entry;
+    if ((entry === unclassified || entry === outOfRange) && !legend.includes(entry)) legend.push(entry);
     properties.KPI_BAND = label;
     properties.COLOR = color;
   }
