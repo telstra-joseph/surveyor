@@ -374,10 +374,14 @@ export function createMapView(element, selector, reportError, capture = false, {
       basemap = value;
       for (const layer of tiles) layer.remove();
       const states = [];
+      let settled = false;
       const reportTiles = () => {
         if (capture || tileGeneration !== generation) return;
         const failures = states.filter(state => state.failed.size);
         const loading = states.some(state => state.layer.isLoading() || state.timer);
+        // Panning loads more tiles without changing the selected basemap.
+        if (loading && settled) return;
+        if (!loading) settled = true;
         reportError(loading ? 'Loading basemap…' : !failures.length ? ''
           : failures.some(state => !state.loaded.size)
             ? 'A basemap layer could not load. The survey points are still available.'

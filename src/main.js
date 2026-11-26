@@ -469,10 +469,10 @@ async function renderMap(preserveSelection = false) {
   mapView.setBearing(plan ? plan.bearing || 0 : outdoorBearing);
   updatePlanControls();
   if (!preserveSelection || !mapView.selectedDevice()) mapView.clear();
-  $('map-status').textContent = 'Preparing map…';
+  sourceStatus('map-status', 'Preparing map…');
   const gap = $('snapshot-gap');
   if (snapshots.length && !planar && !gap.validity.valid) {
-    $('map-status').textContent = 'Enter a whole number of days (0 or more) for the snapshot gap.';
+    sourceStatus('map-status', 'Enter a whole number of days (0 or more) for the snapshot gap.', true);
     return;
   }
   try {
@@ -500,15 +500,15 @@ async function renderMap(preserveSelection = false) {
     updatePlanControls();
     $('map-scale').hidden = !map.ueColors;
     $('map-scale').textContent = map.ueColors ? 'Point colours identify the UE, not the KPI value.' : '';
-    $('map-status').textContent = `${format(count)} ${plan ? `samples on floor plan ${plan.name}` : `geolocated ${count === 1 ? 'sample' : 'samples'}`}`
+    sourceStatus('map-status', `${format(count)} ${plan ? `samples on floor plan ${plan.name}` : `geolocated ${count === 1 ? 'sample' : 'samples'}`}`
       + (planar ? ' (not georeferenced: blank basemap, no Actix matching or KML/SHP export).' : ` · ${format(siteCount)} associated Actix ${siteCount === 1 ? 'cell' : 'cells'}.`)
-      + (plotted < count || sitesPlotted < active.siteOverlay.sites.features.length ? ` Map preview shows ${format(plotted)} samples and ${format(sitesPlotted)} cells; GIS downloads include all points.` : '');
+      + (plotted < count || sitesPlotted < active.siteOverlay.sites.features.length ? ` Map preview shows ${format(plotted)} samples and ${format(sitesPlotted)} cells; GIS downloads include all points.` : ''));
     setMapActions(!count);
     if (planar) for (const id of ['download-kml', 'download-shp', 'basemap']) $(id).disabled = true;
     renderPagination();
     renderTable();
   } catch (error) {
-    if (request === mapSequence) $('map-status').textContent = `Map could not be prepared: ${error.message}`;
+    if (request === mapSequence) sourceStatus('map-status', `Map could not be prepared: ${error.message}`, true);
   }
 }
 

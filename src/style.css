@@ -297,7 +297,7 @@ th, td { padding: .45rem .6rem; text-align: left; vertical-align: top; border: 1
 thead { background: var(--cream); }
 tbody th { font-weight: 500; }
 footer { color: var(--muted); padding-block: .75rem 2rem; }
-#survey-map { height: clamp(20rem, 55vh, 36rem); border: 1px solid var(--line); border-radius: .5rem; background: light-dark(#e6eced, var(--navy)); isolation: isolate; }
+#survey-map { --map-control-size: 3rem; height: clamp(20rem, 55vh, 36rem); border: 1px solid var(--line); border-radius: .5rem; background: light-dark(#e6eced, var(--navy)); isolation: isolate; }
 .report-map-capture { position: fixed !important; left: -2000px; top: 0; width: 1100px; height: 530px; pointer-events: none; }
 #survey-map.floor-plan-basemap, .report-map-capture.floor-plan-basemap { background: #fff; }
 #survey-map :is(.leaflet-popup-content-wrapper, .leaflet-popup-tip, .leaflet-control-attribution) { background: var(--surface); color: var(--ink); }
@@ -320,11 +320,11 @@ footer { color: var(--muted); padding-block: .75rem 2rem; }
 }
 #survey-map :is(.leaflet-control-zoom > a, .map-rotate-button) {
   display: grid; place-content: center; place-items: center;
-  width: max(var(--button-size), 2.75rem); height: max(var(--button-size), 2.5rem); padding: .25rem; line-height: 1;
+  width: var(--map-control-size); height: var(--map-control-size); padding: .375rem; line-height: 1;
 }
 .map-rotate-needle { width: 1.25rem; height: 1.25rem; transform: rotate(var(--map-bearing, 0deg)); transition: transform .15s; }
 .map-rotate-value { font-size: .7rem; font-variant-numeric: tabular-nums; margin-top: .125rem; white-space: nowrap; }
-#survey-map .map-rotate-compass { height: auto; min-height: 2.85rem; cursor: grab; touch-action: none; user-select: none; }
+#survey-map .map-rotate-compass { cursor: grab; touch-action: none; user-select: none; }
 #survey-map .map-rotate-compass.is-dragging { cursor: grabbing; }
 .map-rotate-compass.is-dragging .map-rotate-needle { transition: none; }
 @media (prefers-reduced-motion: reduce) { .map-rotate-needle { transition: none; } }
