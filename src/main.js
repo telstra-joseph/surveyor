@@ -145,6 +145,7 @@ function renderLegend(title, entries, filter, showCounts = false) {
   const cellLabels = entry => (entry.cells || []).map(({ name, exact }) => exact ? name : `${name} (candidate)`);
   active.legend = { title, entries: filter ? entries.map(entry => mapLegendExportEntry(entry, showCounts)) : entries };
   $('legend-title').textContent = title;
+  $('legend-title').hidden = title === 'KPI thresholds';
   $('legend-filter').hidden = !filter || !entries.length;
   $('legend-endpoints').hidden = !filter || (active.map?.extent?.[0] === active.map?.extent?.[1]) || !active.map?.valueLegend.length;
   $('legend-show-all').setAttribute('aria-pressed', 'true');
@@ -858,7 +859,7 @@ function showPlanTransparency(value) {
 }
 // Floor plan options: transparency always, and an orientation prompt while the plan is the basemap.
 function updatePlanControls() {
-  $('basemap').querySelector('option[value="local"]').textContent = mapPlan && !mapPlan.hidden ? 'No basemap (floor plan only)' : 'No basemap (local)';
+  $('basemap').querySelector('option[value="local"]').textContent = mapPlan && !mapPlan.hidden ? 'No basemap (floor plan only)' : 'No basemap';
   $('plan-controls').hidden = !mapPlan;
   if (!mapPlan) return;
   $('plan-controls-name').textContent = mapPlan.name;
@@ -1139,27 +1140,39 @@ const reportSurveys = () => viewSurveys().map(survey => ({ ...survey, planName: 
 reportOptions($('report'), reportSurveys, async ({ surveys: selectedSurveys, keys, sections, thresholdOverrides }) => {
   const location = $('location').value.trim() || 'Network survey';
   const reportStatus = $('report-status');
+  const reportProgress = $('report-progress');
   reporting = true;
   controls();
   reportStatus.textContent = 'Generating PowerPoint…';
+  reportProgress.value = 0;
+  reportProgress.hidden = false;
   try {
     const catalog = snapshots, gap = $('snapshot-gap');
     if (catalog.length && !gap.validity.valid && selectedSurveys.some(survey => survey.metrics.some(metric => keys.includes(metric.key) && metric.geoCount))) {
       throw new Error('Enter a whole number of days (0 or more) for the snapshot gap.');
     }
+    let captureShare = 0;
     const maps = await captureReportMaps({
       surveys: selectedSurveys, plans, bearing: outdoorBearing, keys, snapshots: catalog, maxDays: gap.valueAsNumber, basemap: chosenBasemap,
       sections, thresholdOverrides,
       showSites: $('show-sites').checked, siteStyle: siteStyle(), matchPci: $('site-pci-colors').checked,
       thresholds: $('map-legend').checked, request: gisRequest,
-      progress: (done, total, title) => { reportStatus.textContent = `Capturing map ${done} of ${total}: ${title}…`; },
+      progress: (current, total, title) => {
+        captureShare = 70;
+        reportProgress.value = captureShare * (current - 1) / total;
+        reportStatus.textContent = `Capturing map ${current} of ${total}: ${title}…`;
+      },
     });
     reportStatus.textContent = 'Assembling PowerPoint…';
+    reportProgress.value = captureShare;
     const { buffer } = await workerRequest(new Worker(new URL('./report.worker.js', import.meta.url), { type: 'module' }),
       { location, maps, sections, surveys: selectedSurveys.map(({ filename, profile, days, metrics, sourceIndex }) => ({
         filename, profile, days, sourceIndex, metrics: metrics.filter(metric => keys.includes(metric.key))
           .map(({ key, series, histogram, statistics }) => ({ key, series, histogram, statistics })),
-      })), keys });
+      })), keys }, ({ completed, total }) => {
+        reportProgress.value = captureShare + (95 - captureShare) * completed / total;
+        if (completed === total) reportStatus.textContent = 'Packaging PowerPoint…';
+      });
     download(new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' }),
       `${filename(location)}-report.pptx`);
     const missing = maps.filter(map => map.missingBasemap).length;
@@ -1168,6 +1181,7 @@ reportOptions($('report'), reportSurveys, async ({ surveys: selectedSurveys, key
   } catch (error) {
     reportStatus.textContent = `PowerPoint export failed: ${error.message}`;
   } finally {
+    reportProgress.hidden = true;
     reporting = false;
     controls();
   }

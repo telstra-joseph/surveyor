@@ -65,6 +65,7 @@
             <button type="button" id="clear" class="danger-action" disabled>Clear survey</button>
           </div>
           <p id="report-status" role="status"></p>
+          <progress id="report-progress" aria-label="PowerPoint export progress" max="100" hidden></progress>
         </div>
         <div class="source-feedback">
           <p id="status" class="visually-hidden" role="status"></p>
@@ -182,9 +183,7 @@
               <div class="basemap-control">
                 <select id="basemap" aria-label="Basemap" title="Basemap">
                   <option value="street" selected>Street (OpenStreetMap)</option>
-                  <option value="hybrid">Hybrid</option>
-                  <option value="satellite">Satellite</option>
-                  <option value="local">No basemap (local)</option>
+                  <option value="local">No basemap</option>
                 </select>
               </div>
             </div>

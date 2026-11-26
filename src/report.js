@@ -14,7 +14,7 @@ function surveyDateLabel(surveys) {
   return days.length === 1 ? dateFormat.format(first) : dateFormat.formatRange(first, new Date(days.at(-1)));
 }
 
-export async function makeReport({ location, surveys, keys, maps = [], sections }) {
+export async function makeReport({ location, surveys, keys, maps = [], sections }, onProgress) {
   const deck = new PptxGenJS();
   deck.layout = 'LAYOUT_WIDE';
   deck.title = `${location} Network Survey`;
@@ -154,6 +154,8 @@ export async function makeReport({ location, surveys, keys, maps = [], sections 
     }
   };
 
+  let completed = 0;
+  const total = keys.length * (sections?.length ?? 1);
   const addKpiPages = (key, workbookIndexes, sectionLabel = '') => {
     const title = reportMetricName(key);
     const mapsByWorkbook = new Map(maps.filter(map => map.key === key).map(map => [map.workbookIndex, map]));
@@ -174,6 +176,7 @@ export async function makeReport({ location, surveys, keys, maps = [], sections 
         if (chart) addGroupPages(title, chart.mode, [chart.item], label, key === callDropKey && chart.mode === 'series');
       }
     });
+    onProgress?.(++completed, total);
   };
   if (sections) {
     for (const [index, { title, workbookIndexes, dividerTitle }] of sections.entries()) {

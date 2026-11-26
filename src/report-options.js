@@ -35,6 +35,22 @@ export function groupReportFloors(surveys, order) {
   return groups;
 }
 
+const customTitle = ({ id, name }) => name.trim() || `Section ${id}`;
+const defaultSection = sections => Math.min(...sections.map(({ id }) => id));
+
+export function customReportSections(sections, assignments, order, addDividers) {
+  const groups = new Map(sections.map(section => {
+    const title = customTitle(section);
+    return [section.id, { title, workbookIndexes: [], dividerTitle: addDividers ? title : undefined }];
+  }));
+  const fallback = groups.get(defaultSection(sections));
+  for (const [index, workbook] of order.entries()) {
+    const group = groups.get(assignments.get(workbook)) ?? fallback;
+    group.workbookIndexes.push(index);
+  }
+  return [...groups.values()].filter(section => section.workbookIndexes.length);
+}
+
 export function reportOptions(openButton, getSurveys, onExport) {
   const dialog = document.getElementById('report-dialog');
   const form = document.getElementById('report-options');
@@ -50,6 +66,7 @@ export function reportOptions(openButton, getSurveys, onExport) {
   const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
   let step, surveys, selected, order, floorOrder, kpiOrder, excludedKeys, overrides, floorSections, addDividers, dividerTitles;
   let animations, savedKpiOrder, kpiStorageError;
+  let customSections, customAssignments, nextSectionId;
 
   const metrics = () => order.flatMap(i => surveys[i].metrics);
   const availableKeys = () => {
@@ -59,6 +76,7 @@ export function reportOptions(openButton, getSurveys, onExport) {
   const editableKeys = () => [...new Set(metrics().filter(metric =>
     !excludedKeys.has(metric.key) && metric.geoCount && thresholdProfile(metric.key)).map(metric => metric.key))];
   const workbookName = i => `S${i + 1} · ${surveys[i].filename}`;
+  const hasFloorPlans = () => order.some(i => surveys[i].planId != null);
   const floors = () => {
     const groups = groupReportFloors(surveys, order);
     const ids = [...new Set([...floorOrder, ...groups.keys()])];
@@ -68,11 +86,11 @@ export function reportOptions(openButton, getSurveys, onExport) {
   function renderCustomisation() {
     content.innerHTML = `<h4><label class="checkbox-label"><input type="checkbox" id="report-add-dividers" ${addDividers ? 'checked' : ''}
         aria-controls="report-divider-titles"> Section divider slides</label></h4>
-      <div id="report-divider-titles" ${addDividers ? '' : 'hidden'}>${floors().map(({ id, title }, index) => `<label>
+      <div id="report-divider-titles" ${addDividers ? '' : 'hidden'}>${hasFloorPlans() ? floors().map(({ id, title }, index) => `<label>
         Divider title for ${escapeMarkup(title)}
         <input type="text" maxlength="120" data-divider-title="${index}"
           value="${escapeMarkup(dividerTitles.get(id) ?? title)}">
-      </label>`).join('')}</div>
+      </label>`).join('') : '<p>Name sections and assign workbooks in the next step.</p>'}</div>
       <h4>Map thresholds</h4>`;
     const keys = editableKeys();
     if (!keys.length) {
@@ -97,19 +115,37 @@ export function reportOptions(openButton, getSurveys, onExport) {
   }
 
   function renderOrder() {
+    const custom = floorSections && !hasFloorPlans();
     const items = floorSections ? floors().map(({ title, workbookIndexes }) => ({
       name: title, description: `${workbookIndexes.length} ${workbookIndexes.length === 1 ? 'workbook' : 'workbooks'}`,
     })) : order.map(id => ({ name: workbookName(id), number: `S${id + 1}`, filename: surveys[id].filename }));
     content.innerHTML = `<label>PowerPoint layout
       <select id="report-layout">
-        <option value="sections"${floorSections ? ' selected' : ''}>One section per floor plan</option>
+        <option value="sections"${floorSections ? ' selected' : ''}>${hasFloorPlans() ? 'One section per floor plan' : 'User-defined custom'}</option>
         <option value="comparison"${floorSections ? '' : ' selected'}${addDividers ? ' disabled' : ''}>Compare workbooks by KPI</option>
       </select></label>
       ${addDividers ? '<p>To compare workbooks by KPI, go back and turn off divider slides.</p>' : ''}
-      ${floorSections ? '' : '<p>Move workbooks up or down to set their order within the comparisons.</p>'}
+      ${custom ? renderCustomSections() : `${floorSections ? '' : '<p>Move workbooks up or down to set their order within the comparisons.</p>'}
       <ol class="report-order">${items.map(({ name, description, number, filename }, i) => `<li tabindex="-1">
         <span>${number ? `<strong>${number}</strong> · ${escapeMarkup(filename)}` : `${escapeMarkup(name)} · ${description}`}</span>${moveButtons(name, i, items.length)}
-      </li>`).join('')}</ol>`;
+      </li>`).join('')}</ol>`}`;
+  }
+
+  function renderCustomSections() {
+    const fallback = defaultSection(customSections);
+    return `<div class="actions"><button type="button" data-add-section>Add section</button></div>
+      <ol class="report-order">${customSections.map(({ id, name }, i) => `<li tabindex="-1">
+        <label>Section ${id} name<input type="text" data-section-name="${id}" maxlength="120"
+          placeholder="Section ${id}" value="${escapeMarkup(name)}"></label>
+        ${moveButtons(`section ${id}`, i, customSections.length)}
+        ${customSections.length > 1 ? `<button type="button" data-remove-section="${id}" class="danger-action"
+          aria-label="Remove section ${id}">Remove</button>` : ''}
+      </li>`).join('')}</ol>
+      <p>Assign each workbook to a section. Empty sections are skipped.</p>
+      ${order.map(workbook => `<label>${escapeMarkup(workbookName(workbook))}
+        <select data-workbook-section="${workbook}">${customSections.map(section => `<option value="${section.id}"
+          ${section.id === (customAssignments.get(workbook) ?? fallback) ? 'selected' : ''}>${escapeMarkup(customTitle(section))}</option>`).join('')}</select>
+      </label>`).join('')}`;
   }
 
   function renderChoices() {
@@ -238,6 +274,9 @@ export function reportOptions(openButton, getSurveys, onExport) {
     overrides = new Map();
     floorSections = true;
     floorOrder = [];
+    customSections = [{ id: 1, name: '' }];
+    customAssignments = new Map();
+    nextSectionId = 2;
     addDividers = false;
     dividerTitles = new Map();
     step = 0;
@@ -279,6 +318,14 @@ export function reportOptions(openButton, getSurveys, onExport) {
       renderOrder();
       content.querySelector('#report-layout').focus();
     }
+    if (target.matches('[data-section-name]')) {
+      const section = customSections.find(({ id }) => id === Number(target.dataset.sectionName));
+      section.name = target.value;
+      for (const option of content.querySelectorAll(`[data-workbook-section] option[value="${section.id}"]`)) {
+        option.textContent = customTitle(section);
+      }
+    }
+    if (target.matches('[data-workbook-section]')) customAssignments.set(Number(target.dataset.workbookSection), Number(target.value));
     const details = target.closest('[data-threshold]');
     if (!details) return;
     const key = editableKeys()[Number(details.dataset.threshold)];
@@ -319,13 +366,29 @@ export function reportOptions(openButton, getSurveys, onExport) {
       content.querySelector(`[data-threshold="${threshold}"] [data-reset]`).focus({ preventScroll: true });
       content.scrollTop = scroll;
       error.textContent = '';
+    } else if (target.matches('[data-add-section]')) {
+      const id = nextSectionId++;
+      customSections.push({ id, name: '' });
+      renderOrder();
+      content.querySelector(`[data-section-name="${id}"]`).focus();
+    } else if (target.matches('[data-remove-section]')) {
+      const removed = Number(target.dataset.removeSection);
+      customSections = customSections.filter(({ id }) => id !== removed);
+      for (const [workbook, id] of customAssignments) {
+        if (id === removed) customAssignments.delete(workbook);
+      }
+      renderOrder();
+      content.querySelector('[data-add-section]').focus();
     } else if (target.matches('[data-move]')) {
       const list = content.querySelector('.report-order');
       const i = [...list.children].indexOf(target.closest('li'));
       const position = i + Number(target.dataset.move);
       const count = list.children.length;
       let name;
-      if (floorSections) {
+      if (floorSections && !hasFloorPlans()) {
+        name = customTitle(customSections[i]);
+        [customSections[i], customSections[position]] = [customSections[position], customSections[i]];
+      } else if (floorSections) {
         const groups = floors();
         name = groups[i].title;
         floorOrder = groups.map(({ id }) => id);
@@ -348,10 +411,11 @@ export function reportOptions(openButton, getSurveys, onExport) {
     } else {
       dialog.close();
       onExport({ surveys: order.map(i => ({ ...surveys[i], sourceIndex: i })), keys: availableKeys().filter(key => !excludedKeys.has(key)),
-        sections: floorSections ? floors().map(({ id, title, workbookIndexes }) => ({
+        sections: !floorSections ? undefined : !hasFloorPlans() ? customReportSections(customSections, customAssignments, order, addDividers)
+          : floors().map(({ id, title, workbookIndexes }) => ({
           title, workbookIndexes: workbookIndexes.map(i => order.indexOf(i)),
           dividerTitle: addDividers ? dividerTitles.get(id)?.trim() || title : undefined,
-        })) : undefined,
+        })),
         thresholdOverrides: Object.fromEntries(editableKeys().filter(key => overrides.has(key)).map(key => [key, overrides.get(key)])) });
     }
   });

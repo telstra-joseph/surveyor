@@ -1,6 +1,10 @@
-export function workerRequest(worker, data) {
+export function workerRequest(worker, data, onProgress) {
   return new Promise((resolve, reject) => {
     worker.onmessage = ({ data: result }) => {
+      if (result.progress) {
+        onProgress?.(result.progress);
+        return;
+      }
       worker.terminate();
       if (result.error) reject(new Error(result.error));
       else resolve(result);

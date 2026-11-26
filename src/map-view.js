@@ -11,24 +11,12 @@ const provider = (url, attribution, fallback) => {
     /\{x\}/.test(url) && /\{y\}/.test(url);
   return valid && attribution?.trim() ? { url, attribution: escapeMarkup(attribution) } : null;
 };
-const gibs = 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best';
-const nasa = '<a href="https://www.earthdata.nasa.gov/data/tools/gibs" target="_blank" rel="noopener noreferrer">NASA EOSDIS GIBS</a>';
 const street = provider(env.VITE_STREET_TILE_URL, env.VITE_STREET_TILE_ATTRIBUTION, {
   url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors</a>',
   maxNativeZoom: 19,
 });
-const satellite = provider(env.VITE_SATELLITE_TILE_URL, env.VITE_SATELLITE_TILE_ATTRIBUTION, {
-  url: `${gibs}/BlueMarble_NextGeneration/default/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpeg`,
-  attribution: `Blue Marble, ${nasa}`,
-  maxNativeZoom: 8,
-});
-const labels = provider(env.VITE_LABELS_TILE_URL, env.VITE_LABELS_TILE_ATTRIBUTION, {
-  url: `${gibs}/Reference_Labels_15m/default/GoogleMapsCompatible_Level13/{z}/{y}/{x}.png`,
-  attribution: `Reference labels, ${nasa}`,
-  maxNativeZoom: 13,
-});
-const sources = { local: [], street: street && [street], satellite: satellite && [satellite], hybrid: satellite && labels && [satellite, labels] };
+const sources = { local: [], street: street && [street] };
 
 export function cellDescription(props, prefix) {
   const get = field => props[`${prefix}_${field}`];

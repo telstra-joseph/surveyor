@@ -6,8 +6,8 @@ import { binsPerPage, callDropKey, chart, datasets, groupDatasets, legend, sampl
 import { makeReport } from '../src/report.js';
 import { mapImage, stackImages } from '../src/image-export.js';
 import { parseWorkbook } from '../src/survey.js';
-import { orderWorkbookBatch } from '../src/workers.js';
-import { applySavedKpiOrder, defaultReportKpiOrder, groupReportFloors } from '../src/report-options.js';
+import { orderWorkbookBatch, workerRequest } from '../src/workers.js';
+import { applySavedKpiOrder, customReportSections, defaultReportKpiOrder, groupReportFloors } from '../src/report-options.js';
 import { parseWorkspace, workspaceSnapshot } from '../src/workspace.js';
 
 test('portable workspaces preserve workbook order, floor assignments, snapshots and view settings', async () => {
@@ -72,6 +72,42 @@ test('groups selected workbooks by plan ID, including a section for unassigned l
     { id: 'A', title: 'Level', workbookIndexes: [0, 3] },
     { id: null, title: 'No floor plan', workbookIndexes: [1] },
   ]);
+});
+
+test('exports named custom sections in order and reports completed KPI groups', async () => {
+  const sections = customReportSections([{ id: 2, name: ' Drive route ' }, { id: 3, name: 'Empty' }, { id: 1, name: 'Walk route' }],
+    new Map([[4, 2], [7, 3], [1, 9]]), [1, 4, 6], true);
+  assert.deepEqual(sections, [
+    { title: 'Drive route', workbookIndexes: [1], dividerTitle: 'Drive route' },
+    { title: 'Walk route', workbookIndexes: [0, 2], dividerTitle: 'Walk route' },
+  ]);
+  const key = 'LTE_UE_SINR';
+  const progress = [];
+  const zip = await JSZip.loadAsync(await makeReport({
+    location: 'Test site', keys: [key], sections,
+    surveys: [1, 4, 6].map(sourceIndex => ({ filename: `UE${sourceIndex}.xlsx`, sourceIndex, metrics: [{ key, series: [[0, 1]] }] })),
+  }, (...update) => progress.push(update)));
+  assert.deepEqual(progress, [[1, 2], [2, 2]]);
+  const slide = n => zip.file(`ppt/slides/slide${n}.xml`).async('string');
+  assert.match(await slide(2), /<a:t>Drive route<\/a:t>/);
+  assert.match(await slide(3), /S5 UE4.*Drive route/);
+  assert.match(await slide(4), /<a:t>Walk route<\/a:t>/);
+  assert.match(await slide(5), /S2 UE1.*Walk route/);
+  assert.match(await slide(6), /S7 UE6.*Walk route/);
+});
+
+test('worker progress keeps the request open until its final response', async () => {
+  let terminated = false;
+  const worker = { postMessage() {}, terminate() { terminated = true; } };
+  const updates = [];
+  const result = workerRequest(worker, {}, progress => updates.push(progress));
+  worker.onmessage({ data: { progress: { completed: 1, total: 2 } } });
+  assert.equal(terminated, false);
+  assert.deepEqual(updates, [{ completed: 1, total: 2 }]);
+  const buffer = new ArrayBuffer(1);
+  worker.onmessage({ data: { buffer } });
+  assert.deepEqual(await result, { buffer });
+  assert.equal(terminated, true);
 });
 
 test('restores saved KPI positions and adds newly available KPIs in their default order', () => {
