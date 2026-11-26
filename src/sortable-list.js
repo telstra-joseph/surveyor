@@ -12,10 +12,11 @@ export function sortableList(container, onReorder, { scroll = container, blocked
     for (const item of rows) animations.get(item)?.cancel();
     list.insertBefore(row, rows.indexOf(row) < rows.indexOf(target) ? target.nextElementSibling : target);
     if (animate) rows.forEach((item, index) => {
+      if (item === drag?.row) return;
       const offset = tops[index] - item.getBoundingClientRect().top;
       if (offset) animations.set(item, item.animate(
         [{ transform: `translateY(${offset}px)` }, { transform: 'translateY(0)' }],
-        { duration: 170, easing: 'ease-out' },
+        { duration: 110, easing: 'ease-out' },
       ));
     });
   }
@@ -31,6 +32,7 @@ export function sortableList(container, onReorder, { scroll = container, blocked
     drag = undefined;
     cancelAnimationFrame(frame);
     row.classList.remove('is-dragging');
+    row.style.removeProperty('translate');
     if (list.hasPointerCapture(id)) list.releasePointerCapture(id);
     if (commitOrder) commit(row);
     else if (original) {
@@ -47,12 +49,13 @@ export function sortableList(container, onReorder, { scroll = container, blocked
     if (y < bounds.top + 26) scroll.scrollTop -= 9;
     else if (y > bounds.bottom - 26) scroll.scrollTop += 9;
     const rows = [...list.children].filter(item => item !== row);
-    const top = list.getBoundingClientRect().top;
+    const top = list.getBoundingClientRect().top + list.clientTop;
     const before = rows.find(item => y < top + item.offsetTop + item.offsetHeight / 2);
     if (before && row.nextElementSibling !== before) {
       const target = row.compareDocumentPosition(before) & Node.DOCUMENT_POSITION_PRECEDING ? before : before.previousElementSibling;
       if (target && target !== row) move(row, target);
     } else if (!before && row.nextElementSibling && rows.length) move(row, rows.at(-1));
+    if (drag.follow) row.style.translate = `0 ${y - drag.grabOffset - top - row.offsetTop}px`;
     drag.frame = requestAnimationFrame(dragFrame);
   }
 
@@ -60,14 +63,17 @@ export function sortableList(container, onReorder, { scroll = container, blocked
     const handle = event.target.closest('[data-sort-handle]');
     if (!handle || handle.disabled || !event.isPrimary || event.button !== 0 || blocked() || drag) return;
     const row = handle.closest('li'), list = row.parentElement;
-    drag = { id: event.pointerId, row, list, startY: event.clientY };
+    drag = { id: event.pointerId, row, list, startY: event.clientY,
+      grabOffset: event.clientY - row.getBoundingClientRect().top };
     list.setPointerCapture(event.pointerId);
   });
   container.addEventListener('pointermove', event => {
     if (drag?.id !== event.pointerId) return;
     drag.y = event.clientY;
-    if (!drag.original && Math.abs(drag.y - drag.startY) > 4) {
+    if (!drag.original && Math.abs(drag.y - drag.startY) > 3) {
       drag.original = [...drag.list.children];
+      drag.follow = !reduceMotion();
+      animations.get(drag.row)?.cancel();
       drag.row.classList.add('is-dragging');
       dragFrame();
     }

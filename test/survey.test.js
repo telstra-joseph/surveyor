@@ -20,7 +20,7 @@ test('portable workspaces preserve workbook order, floor assignments, snapshots 
   const second = await parseWorkbook(buffer, 'UE1.xlsx');
   const plan = {
     id: 'plan', name: 'Floor', image: 'data:image/png;base64,AA==', width: 120, height: 60,
-    planar: true, corners: [[0, 0], [120, 0], [0, -60]], markers: [[1, -1]], bearing: 90,
+    planar: true, corners: [[0, 0], [120, 0], [0, -60]], markers: [[1, -1]], bearing: 90, hidden: true,
   };
   const snapshot = { rat: 'LTE', day: '2026-11-04', filename: 'test.csv',
     cells: [{ coords: [151, -32], site: 'A', name: 'Test', sector: '', angles: null }] };
@@ -32,6 +32,9 @@ test('portable workspaces preserve workbook order, floor assignments, snapshots 
   assert.throws(() => parseWorkspace(JSON.stringify({ ...saved, version: 2 })), /version is not supported/);
   assert.throws(() => parseWorkspace(JSON.stringify({
     ...saved, imports: { ...saved.imports, plans: [{ ...plan, image: 'https://example.com/plan.png' }] },
+  })), /invalid floor plans/);
+  assert.throws(() => parseWorkspace(JSON.stringify({
+    ...saved, imports: { ...saved.imports, plans: [{ ...plan, hidden: 'false' }] },
   })), /invalid floor plans/);
   assert.throws(() => parseWorkspace('{ broken'), /not valid JSON/);
 });
@@ -123,17 +126,27 @@ test('map image exports scaled Actix symbols and faded labels without fading sur
   assert.match(svg, /<g opacity="0.4"><rect x="45".*TEST<\/text><\/g>/);
   assert.doesNotMatch(svg, /BLOCKED/);
   assert.match(svg, /<image x="0" y="0" width="100" height="100" href="data:image\/png;base64,points"\/>/);
-  const cropped = mapImage({
+  const plan = {
+    naturalWidth: 200, naturalHeight: 100,
+    getBoundingClientRect: () => ({ left: 21.5, top: 12.75, width: 30.25, height: 56.5 }),
+  };
+  const indoorMap = {
     clientWidth: 100, clientHeight: 100, clientLeft: 0, clientTop: 0, dataset: {}, classList: { contains: () => true },
     getBoundingClientRect: () => ({ left: 0, top: 0 }),
-    querySelector: () => ({
-      naturalWidth: 200, naturalHeight: 100,
-      getBoundingClientRect: () => ({ left: 21.5, top: 12.75, width: 30.25, height: 56.5 }),
-    }),
+    querySelector: () => plan,
     querySelectorAll: selector => layers[selector] || [],
-  }, 'Indoor map');
+  };
+  const cropped = mapImage(indoorMap, 'Indoor map');
   assert.deepEqual([cropped.width, cropped.height], [129, 64.5]);
   assert.match(cropped.svg, /<g transform="translate\(27\.875 -8\.75\)".*data:image\/png;base64,points/);
+
+  plan.visibility = 'hidden';
+  plan.src = 'data:image/png;base64,floorplan';
+  layers['.leaflet-pane img.survey-floor-plan'] = [plan];
+  const hidden = mapImage(indoorMap, 'Hidden floor plan');
+  assert.deepEqual([hidden.width, hidden.height], [100, 100]);
+  assert.doesNotMatch(hidden.svg, /base64,floorplan/);
+  assert.match(hidden.svg, /base64,points/);
 });
 
 test('PowerPoint uses a map or chart independently for each UE and KPI', async () => {

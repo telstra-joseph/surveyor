@@ -28,7 +28,8 @@ export function validateWorkspace(value) {
       typeof plan.planar === 'boolean' && plan.width > 0 && finite(plan.width) && plan.height > 0 && finite(plan.height) &&
       string(plan.image) && /^data:image\/(?:png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(plan.image) &&
       arrayOf(plan.corners, pair) && plan.corners.length === 3 && arrayOf(plan.markers, pair) &&
-      (plan.bearing === undefined || finite(plan.bearing)) && (plan.transparency === undefined || finite(plan.transparency)))) {
+      (plan.bearing === undefined || finite(plan.bearing)) && (plan.transparency === undefined || finite(plan.transparency)) &&
+      (plan.hidden === undefined || typeof plan.hidden === 'boolean'))) {
     throw error('floor plans');
   }
   const planIds = new Set(imports.plans.map(({ id }) => id));

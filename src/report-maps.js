@@ -47,7 +47,7 @@ export async function captureReportMaps({ surveys, plans = [], bearing = 0, keys
       view.setBearing(plan ? plan.bearing || 0 : bearing);
       if (plan && !plan.orientationConfirmed && !plan.bearing) view.alignToFloorPlan();
       const mapBasemap = plan ? 'local' : basemap;
-      view.setBasemap(mapBasemap);
+      if (mapBasemap === 'local') view.setBasemap('local');
       // Georeferenced indoor PCI maps need Actix matches for the legend, even though site overlays stay hidden.
       const catalog = !plan ? snapshots : planar ? [] : snapshots.filter(({ rat }) => radioFields[rat][1] === key);
       const { map } = await request({
@@ -59,6 +59,7 @@ export async function captureReportMaps({ surveys, plans = [], bearing = 0, keys
       if (!map.samples.features.length) continue;
       const sectors = mapSectors(map, matchPci);
       view.render({ ...map, sectors }, showSites && !plan, false);
+      view.setBasemap(mapBasemap);
       const deadline = Date.now() + 4000;
       while (view.tilesLoading() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 80));
       await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));

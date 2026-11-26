@@ -23,7 +23,13 @@
         </div>
         <div class="header-actions">
           <button type="button" id="install" class="quiet" hidden>Install app</button>
-          <button type="button" id="workspace" class="quiet" aria-haspopup="dialog" disabled>Save workspace</button>
+          <button type="button" id="workspace" class="quiet" aria-haspopup="dialog" disabled>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round" aria-hidden="true" focusable="false">
+              <path d="M4 3h13l4 4v13a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z"/>
+              <path d="M7 3v6h10V3m-2 0v4M7 21v-7h10v7"/>
+            </svg>
+            Save workspace
+          </button>
           <button type="button" id="theme-switch" class="theme-switch" role="switch" aria-label="Dark mode" aria-checked="false">
             <svg width="38" height="33.25" viewBox="0 -2 32 28" aria-hidden="true" focusable="false">
               <svg class="theme-sky" width="32" height="23" viewBox="0 0 32 23">
@@ -43,10 +49,7 @@
     </header>
     <main id="main" class="shell" tabindex="-1">
       <section class="panel source" aria-labelledby="source-title">
-        <div class="source-intro">
-          <p class="eyebrow">SOURCE DATA</p>
-          <h1 id="source-title">Upload logs</h1>
-        </div>
+        <h1 id="source-title" class="source-intro">Upload logs</h1>
         <div class="workbooks">
           <label for="files">Workbooks</label>
           <input id="files" type="file" accept=".xlsx" multiple aria-describedby="workbooks-hint">
@@ -58,12 +61,23 @@
           <label for="location">Location</label>
           <input id="location" type="text" maxlength="80" placeholder="e.g. Hunter Expressway">
           <div class="actions">
-            <button type="button" class="primary" id="report" disabled>Download PowerPoint</button>
-            <button type="button" id="clear" disabled>Clear survey</button>
+            <button type="button" class="primary" id="report" disabled>
+              <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M2.4 11.5A10.1 10.1 0 1 1 7 20.6"/>
+                  <path d="M8.7 2.8c2.1 0 3.8 1.6 3.8 3.8v3.6a1.8 1.8 0 0 0 1.8 1.8h3.8a3.7 3.7 0 0 1 3.7 3.8"/>
+                  <rect x="1.5" y="11.5" width="8.7" height="9" rx="1.7"/>
+                  <path d="M4.7 18.2v-4.4h1.2a1.25 1.25 0 0 1 0 2.5H4.7"/>
+                </g>
+              </svg>
+              Download PowerPoint
+            </button>
+            <button type="button" id="clear" class="danger-action" disabled>Clear survey</button>
           </div>
+          <p id="report-status" role="status"></p>
         </div>
         <div class="source-feedback">
-          <p id="status" role="status"><i>No workbooks imported.</i></p>
+          <p id="status" class="visually-hidden" role="status"></p>
           <ul id="issues" hidden></ul>
           <details id="sources" open hidden>
             <summary>Imported workbooks</summary>
@@ -73,28 +87,43 @@
           <details class="actix-imports" open>
             <summary>Actix serving-cell snapshots</summary>
             <div class="filters">
-              <div id="snapshot-date-field" hidden><label for="snapshot-date">Snapshot date override (optional)</label><input id="snapshot-date" type="date"></div>
-              <div id="snapshot-gap-field" hidden><label for="snapshot-gap">Maximum gap in days</label><input id="snapshot-gap" type="number" min="0" step="1" value="7" required></div>
+              <div id="snapshot-date-field" hidden>
+                <label for="snapshot-date">Snapshot date override (optional)</label>
+                <div class="snapshot-date-control">
+                  <input id="snapshot-date" type="date">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true" focusable="false">
+                    <rect x="3" y="5" width="18" height="16" rx="2"/>
+                    <path d="M7 3v4m10-4v4M3 10h18m-13 5h2m4 0h2"/>
+                  </svg>
+                </div>
+              </div>
+              <div id="snapshot-gap-field" hidden>
+                <label for="snapshot-gap">Maximum gap in days</label>
+                <div class="snapshot-gap-control">
+                  <input id="snapshot-gap" type="number" min="0" step="1" value="7" required>
+                  <span id="snapshot-gap-motion" aria-hidden="true"></span>
+                </div>
+              </div>
               <div><label for="catalogs">Actix CSV snapshots</label><input id="catalogs" type="file" accept=".csv,text/csv" multiple></div>
             </div>
-            <p id="catalog-status" role="status"><i>No cell snapshots imported.</i></p>
+            <p id="catalog-status" class="visually-hidden" role="status"></p>
             <ul id="catalog-list" hidden></ul>
-            <button type="button" id="clear-catalogs" disabled>Clear snapshots</button>
+            <ul id="catalog-issues" hidden></ul>
+            <button type="button" id="clear-catalogs" class="danger-action" disabled>Clear snapshots</button>
           </details>
           <details class="indoor-imports" open>
             <summary>Indoor floor plans</summary>
             <p id="plans-hint" class="hint">Select a MapInfo .tab file with its floor-plan image (.bmp, .png or .jpg) and, optionally, its .mrk marker file. With markers, workbook rows are spread evenly along the marker path; otherwise the workbook positions are used.</p>
             <label for="plans">Floor plan files</label>
             <input id="plans" type="file" accept=".tab,.bmp,.png,.jpg,.jpeg,.mrk" multiple aria-describedby="plans-hint">
-            <p id="plan-status" role="status"><i>No floor plans imported.</i></p>
+            <p id="plan-status" class="visually-hidden" role="status"></p>
             <ul id="plan-list" hidden></ul>
-            <button type="button" id="clear-plans" disabled>Clear floor plans</button>
+            <button type="button" id="clear-plans" class="danger-action" disabled>Clear floor plans</button>
           </details>
         </div>
       </section>
       <section class="panel results" aria-labelledby="result-title">
-        <p class="eyebrow">KPI EXPLORER</p>
-        <h2 id="result-title">Compare measurements</h2>
+        <h1 id="result-title">KPI Explorer</h1>
         <div id="explorer" hidden>
           <div class="filters">
             <div><label for="metric">KPI</label><select id="metric"></select></div>
@@ -104,6 +133,8 @@
           <h3 id="chart-title"></h3>
           <p id="interpretation"></p>
           <div id="map-panel" hidden>
+            <details id="map-options" open>
+              <summary>Map settings</summary>
             <div class="filters map-controls">
               <div><label for="basemap">Basemap</label><select id="basemap">
                 <option value="street" selected>Street (OpenStreetMap)</option>
@@ -130,8 +161,9 @@
             <fieldset class="map-settings" id="plan-controls" hidden>
               <legend id="plan-controls-title">Floor plan: <strong id="plan-controls-name"></strong></legend>
               <div class="filters map-sliders">
-                <div><label for="plan-transparency">Floor plan transparency</label> <span id="plan-transparency-value" aria-hidden="true">0%</span>
+                <div><label for="plan-transparency">Transparency</label> <span id="plan-transparency-value" aria-hidden="true">0%</span>
                   <input type="range" id="plan-transparency" min="0" max="90" step="5" value="0" aria-valuetext="0%"></div>
+                <label class="checkbox-label"><input type="checkbox" id="plan-hide" aria-controls="survey-map"> Hide</label>
               </div>
               <div class="plan-orientation" id="plan-orientation" role="group" aria-labelledby="plan-orientation-heading" hidden>
                 <p><strong id="plan-orientation-heading">Floor plan orientation</strong> <span id="plan-orientation-prompt" aria-live="polite"></span></p>
@@ -153,7 +185,10 @@
                 </div>
               </div>
             </fieldset>
+            </details>
             <p id="map-status" role="status"></p>
+            <p id="basemap-status" role="status" hidden></p>
+            <button id="retry-basemap" type="button" hidden>Retry basemap</button>
             <p id="map-scale" hidden></p>
             <div id="survey-map" role="region" aria-label="Interactive KPI map" tabindex="0"></div>
             <div class="actions">
@@ -161,10 +196,10 @@
               <button type="button" id="download-kml" disabled>Download KML</button>
               <button type="button" id="download-shp" disabled>Download Shapefile (ZIP)</button>
             </div>
-            <section id="sector-key" aria-labelledby="sector-key-title" hidden>
-              <h4 id="sector-key-title">Actix sector legend</h4>
+            <details id="sector-key" open hidden>
+              <summary>Actix sector legend</summary>
               <div id="sector-legend"></div>
-            </section>
+            </details>
           </div>
           <div class="comparison">
             <div id="visual" class="chart-scroll" role="region" aria-label="KPI chart" tabindex="0"></div>
@@ -183,18 +218,34 @@
             </aside>
           </div>
           <div id="pagination" class="pagination" role="group" aria-label="Chart pages" hidden>
-            <button type="button" id="previous" aria-controls="visual">Previous page</button>
+            <button type="button" id="previous" aria-controls="visual" aria-label="Previous page"><span aria-hidden="true">←</span></button>
             <span id="page" role="status"></span>
-            <button type="button" id="next" aria-controls="visual">Next page</button>
+            <button type="button" id="next" aria-controls="visual" aria-label="Next page"><span aria-hidden="true">→</span></button>
           </div>
           <div class="actions exports">
-            <div id="image-format-field"><label for="image-format">Image format</label><select id="image-format">
-              <option value="svg">SVG</option><option value="png">PNG</option><option value="jpg">JPG</option>
-            </select></div>
-            <button type="button" id="export-chart">Download plot (SVG)</button>
-            <button type="button" id="copy-plot">Copy plot to clipboard</button>
-            <button type="button" id="export-legend">Download legend (SVG)</button>
-            <button type="button" id="export-both">Download both (SVG)</button>
+            <div id="image-format-field">
+              <label for="image-format">Image format</label>
+              <div class="image-format-controls">
+                <select id="image-format">
+                  <option value="svg">SVG</option><option value="png">PNG</option><option value="jpg">JPG</option>
+                </select>
+                <button type="button" id="copy-plot" class="export-icon" aria-label="Copy plot to clipboard" title="Copy plot to clipboard">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                    <rect x="8" y="8" width="12" height="13" rx="2"/>
+                    <path d="M5 16a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <button type="button" id="export-chart" class="export-icon" aria-label="Download plot (SVG)">
+              <svg width="18" height="18" aria-hidden="true"><use href="#image-download-glyph"/></svg><span>Plot (SVG)</span>
+            </button>
+            <button type="button" id="export-legend" class="export-icon" aria-label="Download legend (SVG)">
+              <svg width="18" height="18" aria-hidden="true"><use href="#image-download-glyph"/></svg><span>Legend (SVG)</span>
+            </button>
+            <button type="button" id="export-both" class="export-icon" aria-label="Download both (SVG)">
+              <svg width="18" height="18" aria-hidden="true"><use href="#image-download-glyph"/></svg><span>Both (SVG)</span>
+            </button>
           </div>
           <p id="export-status" role="status" hidden></p>
           <details id="data-details">
@@ -202,9 +253,9 @@
             <div class="source-table-heading">
               <h4 id="source-table-title"></h4>
               <div id="source-pagination" class="pagination" role="group" aria-label="Source value pages" hidden>
-                <button type="button" id="source-previous" aria-controls="table">Previous page</button>
+                <button type="button" id="source-previous" aria-controls="table" aria-label="Previous page"><span aria-hidden="true">←</span></button>
                 <span id="source-page" role="status"></span>
-                <button type="button" id="source-next" aria-controls="table">Next page</button>
+                <button type="button" id="source-next" aria-controls="table" aria-label="Next page"><span aria-hidden="true">→</span></button>
               </div>
             </div>
             <div id="table" class="table-scroll" role="region" aria-label="Source values" tabindex="0"></div>
@@ -213,6 +264,11 @@
       </section>
       <footer>Joseph, 2026</footer>
     </main>
+    <svg width="0" height="0" class="visually-hidden" aria-hidden="true">
+      <symbol id="image-download-glyph" viewBox="0 0 24 24">
+        <path d="M12 3v12m-4-4 4 4 4-4M5 16v5h14v-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </symbol>
+    </svg>
     <dialog id="workspace-dialog" aria-labelledby="workspace-title">
       <h2 id="workspace-title">Save or restore workspace</h2>
       <p>Save your imported data and current view settings. Workspace files contain survey data; share them only with authorised recipients.</p>
@@ -241,7 +297,7 @@
         <p id="report-options-error" role="alert"></p>
         <p id="report-order-status" class="visually-hidden" role="status"></p>
         <footer class="actions">
-          <button id="report-cancel" type="button">Cancel</button>
+          <button id="report-cancel" type="button" class="danger-action">Cancel</button>
           <button id="report-back" type="button">Back</button>
           <button id="report-next" class="primary" type="submit">Next</button>
         </footer>

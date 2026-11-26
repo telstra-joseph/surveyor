@@ -26,7 +26,9 @@ export function mapImage(element, title, includeTiles = false, { cropToFloorPlan
   };
   const overlaps = (area, { x, y, w, h }) => area.x < x + w && area.y < y + h && area.x + area.w > x && area.y + area.h > y;
   const screen = { x: 0, y: 0, w: width, h: height };
-  const planImage = cropToFloorPlan === false ? null : element.querySelector('img.survey-floor-plan');
+  const isVisible = node => getComputedStyle(node).visibility !== 'hidden';
+  const plan = cropToFloorPlan === false ? null : element.querySelector('img.survey-floor-plan');
+  const planImage = plan && isVisible(plan) ? plan : null;
   if (cropToFloorPlan && !planImage) throw new Error('The floor plan is not available for capture.');
   const planBounds = planImage && bounds(planImage);
   if (planBounds && (!planBounds.w || !planBounds.h)) throw new Error('The floor plan has no visible bounds.');
@@ -75,12 +77,13 @@ export function mapImage(element, title, includeTiles = false, { cropToFloorPlan
       }
     }
     const xml = new XMLSerializer();
-    const plans = [...element.querySelectorAll('.leaflet-pane img.survey-floor-plan')].map(node => {
-      const transform = new DOMMatrixReadOnly(getComputedStyle(node).transform);
+    const plans = [...element.querySelectorAll('.leaflet-pane img.survey-floor-plan')].filter(isVisible).map(node => {
+      const style = getComputedStyle(node);
+      const transform = new DOMMatrixReadOnly(style.transform);
       const pane = node.parentElement.getBoundingClientRect();
       const { a, b, c, d, e, f } = transform;
       const matrix = [a, b, c, d, e + pane.left - originX, f + pane.top - originY].map(value => +value.toFixed(6));
-      const opacity = +getComputedStyle(node).opacity;
+      const opacity = +style.opacity;
       return `<image width="${node.width}" height="${node.height}" preserveAspectRatio="none" transform="matrix(${matrix.join(' ')})"${opacity < 1 ? ` opacity="${opacity}"` : ''} href="${escapeMarkup(node.src)}"/>`;
     }).join('');
     const actix = within => node => {

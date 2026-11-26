@@ -5,9 +5,9 @@ import { sortableList } from './sortable-list.js';
 
 const steps = ['Choose workbooks', 'Choose KPIs', 'Customise PowerPoint', 'Arrange report sections'];
 const kpiOrderStorageKey = 'surveyor-report-kpi-order';
-const checkbox = (value, label, checked) => `<label class="checkbox-label">
+const checkbox = (value, label, checked, number = '') => `<label class="checkbox-label">
   <input type="checkbox" value="${escapeMarkup(String(value))}" ${checked ? 'checked' : ''}>
-  ${escapeMarkup(label)}</label>`;
+  <span>${number ? `<strong>${number}</strong> · ` : ''}${escapeMarkup(label)}</span></label>`;
 const moveButtons = (name, index, count) => `<div class="actions">
   <button type="button" data-move="-1" aria-label="Move ${escapeMarkup(name)} up" ${index === 0 ? 'disabled' : ''}>Move up</button>
   <button type="button" data-move="1" aria-label="Move ${escapeMarkup(name)} down" ${index === count - 1 ? 'disabled' : ''}>Move down</button>
@@ -64,11 +64,8 @@ export function reportOptions(openButton, getSurveys, onExport) {
   };
 
   function renderCustomisation() {
-    content.innerHTML = `<h4>Section divider slides</h4>
-      <label class="checkbox-label"><input type="checkbox" id="report-add-dividers" ${addDividers ? 'checked' : ''}
-        aria-controls="report-divider-titles" aria-describedby="report-divider-hint">
-        Add a divider slide before each section</label>
-      <p id="report-divider-hint">Divider slides use the one-section-per-floor-plan layout.</p>
+    content.innerHTML = `<h4><label class="checkbox-label"><input type="checkbox" id="report-add-dividers" ${addDividers ? 'checked' : ''}
+        aria-controls="report-divider-titles"> Section divider slides</label></h4>
       <div id="report-divider-titles" ${addDividers ? '' : 'hidden'}>${floors().map(({ id, title }, index) => `<label>
         Divider title for ${escapeMarkup(title)}
         <input type="text" maxlength="120" data-divider-title="${index}"
@@ -80,8 +77,7 @@ export function reportOptions(openButton, getSurveys, onExport) {
       content.insertAdjacentHTML('beforeend', '<p>None of the selected KPIs have editable map thresholds.</p>');
       return;
     }
-    content.insertAdjacentHTML('beforeend', `<p>Changes apply only to maps in this PowerPoint. Cutoffs use the workbook units.
-      If a cutoff changes, unchanged default labels update to show the new range.</p>${keys.map((key, index) => {
+    content.insertAdjacentHTML('beforeend', keys.map((key, index) => {
       const base = thresholdProfile(key);
       const draft = overrides.get(key) ?? base;
       return `<details data-threshold="${index}">
@@ -95,39 +91,37 @@ export function reportOptions(openButton, getSurveys, onExport) {
         </div>`).join('')}
         <button type="button" data-reset>Restore default thresholds</button>
       </details>`;
-    }).join('')}`);
+    }).join(''));
   }
 
   function renderOrder() {
     const items = floorSections ? floors().map(({ title, workbookIndexes }) => ({
       name: title, description: `${workbookIndexes.length} ${workbookIndexes.length === 1 ? 'workbook' : 'workbooks'}`,
-    })) : order.map(id => ({ name: workbookName(id) }));
+    })) : order.map(id => ({ name: workbookName(id), number: `S${id + 1}`, filename: surveys[id].filename }));
     content.innerHTML = `<label>PowerPoint layout
       <select id="report-layout">
         <option value="sections"${floorSections ? ' selected' : ''}>One section per floor plan</option>
         <option value="comparison"${floorSections ? '' : ' selected'}${addDividers ? ' disabled' : ''}>Compare workbooks by KPI</option>
       </select></label>
       ${addDividers ? '<p>To compare workbooks by KPI, go back and turn off divider slides.</p>' : ''}
-      <p>${floorSections ? 'Move floor plan sections up or down. Workbooks without an assigned plan share a section.'
-        : 'Move workbooks up or down to set their order within the comparisons.'}</p>
-      <ol class="report-order">${items.map(({ name, description }, i) => `<li tabindex="-1">
-        <span>${escapeMarkup(name)}${description ? ` · ${description}` : ''}</span>${moveButtons(name, i, items.length)}
+      ${floorSections ? '' : '<p>Move workbooks up or down to set their order within the comparisons.</p>'}
+      <ol class="report-order">${items.map(({ name, description, number, filename }, i) => `<li tabindex="-1">
+        <span>${number ? `<strong>${number}</strong> · ${escapeMarkup(filename)}` : `${escapeMarkup(name)} · ${description}`}</span>${moveButtons(name, i, items.length)}
       </li>`).join('')}</ol>`;
   }
 
   function renderChoices() {
     const keys = availableKeys();
-    content.innerHTML = `<div class="actions">
+    content.innerHTML = `<div class="actions report-choice-actions">
       <button type="button" data-select="all">Select all</button>
-      <button type="button" data-select="none">Clear selection</button>
+      <button type="button" class="danger-action" data-select="none">Clear selection</button>
+      ${step === 1 ? '<button type="button" data-save-kpi-order>Save order as default</button>' : ''}
     </div>${step === 0
       ? `<div class="report-choices" role="group" aria-label="Workbooks">${surveys.map((_, i) =>
-        checkbox(i, workbookName(i), selected.has(i))).join('')}</div>`
-      : `<p id="report-kpi-reorder-hint">Drag the handles to reorder slides, or focus a handle and use the Up and Down arrow keys.</p>
-        <button type="button" data-save-kpi-order>Save order as default</button>
-        <ol class="report-order report-kpi-order sortable-list" aria-label="KPIs">${keys.map(key => `<li>
+        checkbox(i, surveys[i].filename, selected.has(i), `S${i + 1}`)).join('')}</div>`
+      : `<ol class="report-order report-kpi-order sortable-list" aria-label="KPIs">${keys.map(key => `<li>
           <button type="button" data-sort-handle aria-label="Reorder ${escapeMarkup(reportMetricName(key))}"
-            aria-describedby="report-kpi-reorder-hint"><span aria-hidden="true">&#8942;&#8942;</span></button>
+            aria-keyshortcuts="ArrowUp ArrowDown"><span aria-hidden="true">&#8942;&#8942;</span></button>
           ${checkbox(key, reportMetricName(key), !excludedKeys.has(key))}
         </li>`).join('')}</ol>`}`;
     if (step === 1 && kpiStorageError) error.textContent = kpiStorageError;

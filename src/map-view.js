@@ -342,6 +342,8 @@ export function createMapView(element, selector, reportError, capture = false, {
   const hoverRenderer = L.svg({ pane: 'actix-hover-links' });
   let tiles = [];
   let basemap = 'local';
+  let tileGeneration = 0;
+  const tileRetries = new Set();
   let points;
   let cells;
   let bounds;
@@ -357,23 +359,59 @@ export function createMapView(element, selector, reportError, capture = false, {
   let showActix;
   let showHoverLinks = true;
   let siteScale = 1;
-  for (const option of selector.options) if (!sources[option.value]) {
+  for (const option of selector.options) if (!sources[option.value] && !option.disabled) {
     option.disabled = true;
     option.textContent += ' (not configured)';
   }
   if (selector.selectedOptions[0]?.disabled) selector.value = 'local';
 
-  function setBasemap(value) {
+  function setBasemap(value, retry = false) {
     if (planar) value = 'local';
-    if (value !== basemap) {
+    if (value !== basemap || retry) {
+      const generation = ++tileGeneration;
+      for (const timer of tileRetries) clearTimeout(timer);
+      tileRetries.clear();
       basemap = value;
       for (const layer of tiles) layer.remove();
-      tiles = (sources[value] || []).map(({ url, attribution, maxNativeZoom }) => {
+      const states = [];
+      const reportTiles = () => {
+        if (capture || tileGeneration !== generation) return;
+        const failures = states.filter(state => state.failed.size);
+        const loading = states.some(state => state.layer.isLoading() || state.timer);
+        reportError(loading ? 'Loading basemap…' : !failures.length ? ''
+          : failures.some(state => !state.loaded.size)
+            ? 'A basemap layer could not load. The survey points are still available.'
+            : 'Some basemap tiles could not load. The survey points are still available.', !loading && failures.length > 0);
+      };
+      states.push(...(sources[value] || []).map(({ url, attribution, maxNativeZoom }, index) => {
         const layer = L.tileLayer(url, { attribution, maxNativeZoom, noWrap: true, maxZoom: 20,
-          crossOrigin: capture ? 'anonymous' : false, referrerPolicy: 'strict-origin-when-cross-origin' });
-        layer.once('tileerror', () => reportError('Some basemap tiles could not load. The survey points are still available.'));
-        return layer.addTo(map);
-      });
+          zIndex: index + 1, crossOrigin: capture ? 'anonymous' : false, referrerPolicy: 'strict-origin-when-cross-origin' });
+        const state = { layer, loaded: new Set(), failed: new Set(), retried: false };
+        if (!capture) layer.on({
+          tileload: ({ tile }) => state.loaded.add(tile),
+          tileerror: ({ tile }) => state.failed.add(tile),
+          tileunload: ({ tile }) => { state.loaded.delete(tile); state.failed.delete(tile); },
+          loading: reportTiles,
+          load: () => {
+            if (tileGeneration !== generation) return;
+            if (state.failed.size && !state.loaded.size && !state.retried) {
+              state.retried = true;
+              state.timer = setTimeout(() => {
+                tileRetries.delete(state.timer);
+                state.timer = undefined;
+                if (tileGeneration !== generation) return;
+                if (!state.loaded.size && (state.failed.size || layer.isLoading())) layer.redraw();
+                reportTiles();
+              }, 500);
+              tileRetries.add(state.timer);
+            }
+            reportTiles();
+          },
+        });
+        return state;
+      }));
+      tiles = states.map(({ layer }) => layer.addTo(map));
+      reportTiles();
     }
     updatePlanBasemap();
   }
@@ -382,8 +420,9 @@ export function createMapView(element, selector, reportError, capture = false, {
   function updatePlanBasemap() {
     element.classList.toggle('floor-plan-basemap', planIsBasemap());
   }
-  function setPlanStyle({ transparency = 0 } = {}) {
+  function setPlanStyle({ transparency = 0, hidden = false } = {}) {
     element.style.setProperty('--plan-opacity', 1 - transparency / 100);
+    element.classList.toggle('floor-plan-hidden', hidden === true);
   }
   const limit = 6000;
   function preview({ type, features }) {
@@ -630,6 +669,8 @@ export function createMapView(element, selector, reportError, capture = false, {
     return plotted;
   }, destroy: () => {
     clearTimeout(announceTimer);
+    tileGeneration++;
+    for (const timer of tileRetries) clearTimeout(timer);
     map.remove();
   },
     tilesLoading: () => tiles.some(layer => layer.isLoading()), selectedDevice: () => selected?.properties.DEVICE, setHoverLinks(show) {
