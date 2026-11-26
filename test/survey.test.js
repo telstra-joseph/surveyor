@@ -29,6 +29,13 @@ test('portable workspaces preserve workbook order, floor assignments, snapshots 
     theme: 'dark', outdoorBearing: 12, values: { 'image-format': 'png' }, checks: { 'show-sites': false },
   });
   assert.deepEqual(parseWorkspace(JSON.stringify(saved)), saved);
+  for (const workbookSelection of [[], [1]]) {
+    const filtered = { ...saved, view: { ...saved.view, workbookSelection } };
+    assert.deepEqual(parseWorkspace(JSON.stringify(filtered)), filtered);
+  }
+  for (const workbookSelection of [[2], [1, 1]]) {
+    assert.throws(() => parseWorkspace(JSON.stringify({ ...saved, view: { ...saved.view, workbookSelection } })), /invalid workbook selection/);
+  }
   assert.throws(() => parseWorkspace(JSON.stringify({ ...saved, version: 2 })), /version is not supported/);
   assert.throws(() => parseWorkspace(JSON.stringify({
     ...saved, imports: { ...saved.imports, plans: [{ ...plan, image: 'https://example.com/plan.png' }] },

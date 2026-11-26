@@ -124,6 +124,15 @@
       </section>
       <section id="results" class="panel results" aria-labelledby="result-title" hidden>
         <h1 id="result-title">KPI Explorer</h1>
+        <details id="explorer-workbooks" hidden>
+          <summary>Workbooks <span id="explorer-workbook-count"></span></summary>
+          <fieldset class="explorer-workbook-choices">
+            <legend class="visually-hidden">Workbooks to view</legend>
+            <label class="checkbox-label"><input type="checkbox" id="explorer-workbooks-all"> Select all</label>
+            <div id="explorer-workbook-list"></div>
+          </fieldset>
+        </details>
+        <p id="explorer-empty" role="status" hidden>Select at least one workbook to view its KPIs.</p>
         <div id="explorer" hidden>
           <div class="filters">
             <div><label for="metric">KPI</label><select id="metric"></select></div>

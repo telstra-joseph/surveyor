@@ -51,6 +51,11 @@ export function validateWorkspace(value) {
       !Object.values(view.values).every(string) || !Object.values(view.checks).every(checked => typeof checked === 'boolean')) {
     throw error('view settings');
   }
+  if (view.workbookSelection !== undefined &&
+      (!arrayOf(view.workbookSelection, index => Number.isSafeInteger(index) && index >= 0 && index < imports.surveys.length) ||
+        new Set(view.workbookSelection).size !== view.workbookSelection.length)) {
+    throw error('workbook selection');
+  }
   return value;
 }
 

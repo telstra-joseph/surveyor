@@ -56,6 +56,7 @@ themeSwitch.addEventListener('click', () => {
 });
 
 let surveys = [];
+let selectedWorkbooks = null;
 let keys = [];
 let page = 0;
 let importing = false;
@@ -102,6 +103,8 @@ function viewSurvey(survey) {
   return result;
 }
 const viewSurveys = () => surveys.map(viewSurvey);
+const explorerViews = () => surveys.flatMap((survey, sourceIndex) =>
+  !selectedWorkbooks || selectedWorkbooks.has(survey) ? [{ ...viewSurvey(survey), sourceIndex }] : []);
 
 function persistIfKept() {
   if ($('keep-imports').checked) void persistImports();
@@ -333,7 +336,8 @@ function renderChart(preserveSelection = false) {
   const key = $('metric').value;
   const mode = $('mode').value;
   const title = metricName(key);
-  const allItems = datasets(viewSurveys(), key, mode);
+  const views = explorerViews();
+  const allItems = datasets(views, key, mode);
   if (!allItems.length) return;
   const groups = groupDatasets(allItems);
   const group = $('workbook-group').selectedIndex;
@@ -361,9 +365,9 @@ function renderChart(preserveSelection = false) {
     }
   }
   const plot = mode === 'statistics' || isMap ? null : chart(title, mode, items, mode === 'series' ? 0 : page);
-  active = { key, title, mode, items, rows, plot, pages, groupSuffix };
+  active = { key, title, mode, items, rows, plot, pages, groupSuffix, views };
   $('chart-title').textContent = `${title} — ${modes[mode]}`;
-  const missing = surveys.length - allItems.length;
+  const missing = views.length - allItems.length;
   const dropSeries = key === callDropKey && mode === 'series';
   const interpretation = dropSeries
     ? total ? 'Each point marks a detected call drop. Workbook row positions are not time-aligned.' : 'No call drops detected in this workbook group.'
@@ -372,7 +376,7 @@ function renderChart(preserveSelection = false) {
     : mode === 'series'
       ? `Workbook row positions are not time-aligned. For dense traces, the plot keeps up to ${markLimit} points per device; the source table retains every numeric reading.`
       : isMap ? '' : 'Statistics are displayed as reported, not recalculated across devices.';
-  const availability = missing ? `${missing} of ${surveys.length} workbooks did not report this view.` : '';
+  const availability = missing ? `${missing} of ${views.length} selected workbooks did not report this view.` : '';
   $('interpretation').textContent = [interpretation, availability].filter(Boolean).join(' ');
   $('interpretation').hidden = !interpretation && !availability;
   $('visual').hidden = !plot;
@@ -436,10 +440,10 @@ async function renderMap(preserveSelection = false) {
   renderTable();
   setMapActions(true);
   $('map-scale').hidden = true;
-  const canChooseLegend = surveys.length > 1 && supportsMapThresholds(active.key);
+  const canChooseLegend = active.views.length > 1 && supportsMapThresholds(active.key);
   $('map-legend-field').hidden = !canChooseLegend;
   const legendMode = canChooseLegend ? ($('map-legend').checked ? 'thresholds' : 'ue') : 'auto';
-  const plan = planFor(surveys[active.items[0].index]);
+  const plan = planFor(active.views[active.items[0].index]);
   const planar = Boolean(plan?.planar);
   if (mapView && mapView.planar !== planar) {
     mapView.destroy();
@@ -472,7 +476,7 @@ async function renderMap(preserveSelection = false) {
     return;
   }
   try {
-    const views = viewSurveys();
+    const { views } = active;
     const { map } = await gisRequest({ type: 'map', key: active.key, snapshots: planar ? [] : snapshots, maxDays: gap.valueAsNumber, legendMode,
       workbooks: active.items.map(({ index, tag, color }) => mapWorkbook(views[index], active.key, tag, color)) });
     if (request !== mapSequence) return;
@@ -509,7 +513,7 @@ async function renderMap(preserveSelection = false) {
 }
 
 function renderGroups(preserveSelection = false, preferredGroup = 0) {
-  const groups = groupDatasets(datasets(viewSurveys(), $('metric').value, $('mode').value));
+  const groups = groupDatasets(datasets(explorerViews(), $('metric').value, $('mode').value));
   const select = $('workbook-group');
   select.replaceChildren();
   for (const items of groups) {
@@ -530,7 +534,7 @@ function renderGroups(preserveSelection = false, preferredGroup = 0) {
 }
 
 function renderModes(preferred, preserveSelection = false, preferredGroup = 0) {
-  const key = $('metric').value, views = viewSurveys();
+  const key = $('metric').value, views = explorerViews();
   const available = Object.keys(modes).filter(mode => datasets(views, key, mode).length);
   $('mode').replaceChildren(...available.map(mode => new Option(modes[mode], mode)));
   if (available.includes(preferred)) $('mode').value = preferred;
@@ -540,6 +544,8 @@ function renderModes(preferred, preserveSelection = false, preferredGroup = 0) {
 
 function removeWorkbook(index) {
   const [removed] = surveys.splice(index, 1);
+  selectedWorkbooks?.delete(removed);
+  if (selectedWorkbooks?.size === surveys.length) selectedWorkbooks = null;
   renderSurvey(false);
   sourceStatus('status', `Removed ${removed.filename}. ${surveys.length
     ? `${surveys.length} ${surveys.length === 1 ? 'workbook' : 'workbooks'} remaining.`
@@ -634,17 +640,66 @@ function renderWorkbookList() {
 }
 
 function renderSurvey(preferMap = true, rebuildSources = true, view) {
-  const previous = view?.metric ?? $('metric').value;
-  keys = [...new Set(surveys.flatMap(survey => survey.metrics.map(metric => metric.key)))];
   $('results').hidden = !surveys.length;
-  $('explorer').hidden = !keys.length;
   $('sources').hidden = !surveys.length;
   if (rebuildSources) renderWorkbookList();
+  renderExplorerWorkbooks();
+  renderExplorer(preferMap, view);
+}
+
+const workbookChoices = $('explorer-workbook-list');
+const allWorkbooksChoice = $('explorer-workbooks-all');
+function updateExplorerWorkbooks() {
+  const count = selectedWorkbooks?.size ?? surveys.length;
+  $('explorer-workbook-count').textContent = `(${count} of ${surveys.length})`;
+  $('explorer-empty').hidden = !surveys.length || count > 0;
+  allWorkbooksChoice.checked = count === surveys.length;
+  allWorkbooksChoice.indeterminate = count > 0 && count < surveys.length;
+}
+
+function renderExplorerWorkbooks() {
+  $('explorer-workbooks').hidden = surveys.length < 2 && !selectedWorkbooks;
+  workbookChoices.replaceChildren(...surveys.map((survey, index) => {
+    const label = document.createElement('label');
+    label.className = 'checkbox-label';
+    const choice = document.createElement('input');
+    choice.type = 'checkbox';
+    choice.checked = !selectedWorkbooks || selectedWorkbooks.has(survey);
+    choice.addEventListener('change', () => {
+      selectedWorkbooks ??= new Set(surveys);
+      if (choice.checked) selectedWorkbooks.add(survey);
+      else selectedWorkbooks.delete(survey);
+      if (selectedWorkbooks.size === surveys.length) selectedWorkbooks = null;
+      updateExplorerWorkbooks();
+      renderExplorer(false);
+    });
+    const text = document.createElement('span');
+    const tag = document.createElement('strong');
+    tag.textContent = `S${index + 1}`;
+    text.append(tag, ` ${deviceName(survey)} · ${survey.filename}`);
+    label.append(choice, text);
+    return label;
+  }));
+  updateExplorerWorkbooks();
+}
+
+allWorkbooksChoice.addEventListener('change', () => {
+  selectedWorkbooks = allWorkbooksChoice.checked ? null : new Set();
+  for (const choice of workbookChoices.querySelectorAll('input')) choice.checked = allWorkbooksChoice.checked;
+  updateExplorerWorkbooks();
+  renderExplorer(false);
+});
+
+function renderExplorer(preferMap, view) {
+  const previous = view?.metric ?? $('metric').value;
+  const views = explorerViews();
+  keys = [...new Set(views.flatMap(survey => survey.metrics.map(metric => metric.key)))];
+  $('explorer').hidden = !keys.length;
   $('metric').replaceChildren(...keys.map(key => new Option(metricName(key), key)));
   if (keys.includes(previous)) $('metric').value = previous;
   else if (keys.includes('LTE_UE_RSRP')) $('metric').value = 'LTE_UE_RSRP';
   if (keys.length && preferMap) {
-    const mappable = new Set(viewSurveys().flatMap(survey =>
+    const mappable = new Set(views.flatMap(survey =>
       survey.metrics.filter(metric => hasMappedSamples(survey, metric)).map(metric => metric.key)));
     if (mappable.size && !mappable.has($('metric').value)) $('metric').value = mappable.values().next().value;
     renderModes(mappable.size ? 'map' : $('mode').value);
@@ -699,6 +754,7 @@ $('files').addEventListener('change', async event => {
 
 $('clear').addEventListener('click', () => {
   surveys = [];
+  selectedWorkbooks = null;
   $('location').value = '';
   $('issues').replaceChildren();
   $('issues').hidden = true;
@@ -1144,6 +1200,7 @@ function currentWorkspace() {
     location: $('location').value, metric: $('metric').value, mode: $('mode').value,
     group: Math.max(0, $('workbook-group').selectedIndex), basemap: chosenBasemap, outdoorBearing,
     theme: document.documentElement.dataset.theme,
+    ...(selectedWorkbooks && { workbookSelection: surveys.flatMap((survey, index) => selectedWorkbooks.has(survey) ? [index] : []) }),
     values: readControls(workspaceValues, 'value'), checks: readControls(workspaceChecks, 'checked'),
   });
 }
@@ -1154,6 +1211,8 @@ async function restoreWorkspace({ imports, view }) {
   active = undefined;
   mapPlan = undefined;
   ({ surveys, snapshots, plans } = imports);
+  selectedWorkbooks = view.workbookSelection && view.workbookSelection.length < surveys.length
+    ? new Set(view.workbookSelection.map(index => surveys[index])) : null;
   $('location').value = view.location;
   chosenBasemap = [...$('basemap').options].some(option => option.value === view.basemap && !option.disabled)
     ? view.basemap : 'local';
